@@ -5,11 +5,13 @@ Controls portal instances, sends commands, views screenshots, chats.
 Aesthetic: dark glass sidebar + black glass main area with techny accents.
 """
 
-import importlib.util
+import json
 import math
 import os
+import random
 import sys
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -26,32 +28,1097 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QStackedWidget
 )
 
-# ------------------------------------------------------------------
-# Load portal module (shares OrbWidget, FrostedContainer, PALETTE, etc.)
-# ------------------------------------------------------------------
-_PORTAL_PATH = Path(__file__).parent / "Python Portal for Atlas v2.pyw"
-_spec = importlib.util.spec_from_file_location("portal_shared", str(_PORTAL_PATH))
-_portal = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_portal)
-
-# Extract shared components
-PALETTE = _portal.PALETTE
-_STATE_COLORS = _portal._STATE_COLORS
-OrbWidget = _portal.OrbWidget
-FrostedContainer = _portal.FrostedContainer
-CircularGlassFrame = _portal.CircularGlassFrame
-
-# Firebase helpers (shared from portal module)
-_firebase_get = _portal._firebase_get
-_firebase_put = _portal._firebase_put
-_firebase_delete = _portal._firebase_delete
-FIREBASE_URL = _portal.FIREBASE_URL
-
 import uuid as _uuid
 import base64 as _b64
 import threading as _threading
 
 from PySide6.QtCore import QThread, QObject as _QObj
+
+# ------------------------------------------------------------------
+# Shared components (standalone — no dependency on portal file)
+# ------------------------------------------------------------------
+
+PALETTE = {
+    "bg": "#0b0b14",
+    "panel": "#12121f",
+    "panel_light": "#1c1c2e",
+    "text": "#f0f0f5",
+    "muted": "#8b8b9a",
+    "accent": "#9b59b6",
+    "accent_bright": "#c084fc",
+    "active": "#00d4ff",
+    "success": "#22c55e",
+    "error": "#ef4444",
+    "warning": "#f59e0b",
+    "chat_bg": "#0f0f1a",
+    "bubble_atlas": "#1a1a2e",
+    "bubble_user": "#2e1a47",
+    "bubble_border": "#4a2a6e",
+    "input_bg": "#16162b",
+}
+
+FIREBASE_URL = "https://mbe-portal-default-rtdb.firebaseio.com"
+
+def _firebase_put(path, data):
+    try:
+        url = f"{FIREBASE_URL}/{path}.json"
+        payload = json.dumps(data).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="PUT",
+                                      headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status in (200, 204)
+    except Exception:
+        return False
+
+
+def _firebase_get(path):
+    try:
+        url = f"{FIREBASE_URL}/{path}.json"
+        req = urllib.request.Request(url,
+                                      headers={"User-Agent": "RiftAdminConsole/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _firebase_delete(path):
+    try:
+        url = f"{FIREBASE_URL}/{path}.json"
+        req = urllib.request.Request(url, method="DELETE")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status in (200, 204)
+    except Exception:
+        return False
+
+# ------------------------------------------------------------------
+# UI: frosted glass container
+# ------------------------------------------------------------------
+class FrostedContainer(QFrame):
+    """A rounded, semi-transparent frosted-glass frame."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        radius = 22
+
+        # Frosted glass fill: semi-transparent dark gradient
+        fill_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+        fill_grad.setColorAt(0, QColor(26, 24, 42, 238))
+        fill_grad.setColorAt(0.5, QColor(20, 19, 34, 245))
+        fill_grad.setColorAt(1, QColor(14, 13, 26, 250))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(fill_grad))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # Soft top highlight (glass sheen)
+        sheen_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.top() + rect.height() * 0.35)
+        sheen_grad.setColorAt(0, QColor(255, 255, 255, 20))
+        sheen_grad.setColorAt(1, QColor(255, 255, 255, 0))
+        sheen_rect = rect.adjusted(2, 2, -2, 0)
+        sheen_rect.setHeight(int(rect.height() * 0.35))
+        painter.setBrush(QBrush(sheen_grad))
+        painter.drawRoundedRect(sheen_rect, radius, radius)
+
+        # Thin purple border
+        pen = QPen(QColor(154, 89, 182, 45))
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius, radius)
+
+        painter.end()
+
+# ------------------------------------------------------------------
+# Dark matter particle system
+# ------------------------------------------------------------------
+# Violet color palette for the particle field — kept dark, no bright star vibes
+_DM_COLORS = [
+    (4, 2, 10),       # #04020A - darkest (most common)
+    (18, 10, 34),     # #120A22 - dark
+    (38, 20, 62),     # #26143E - mid-dark
+    (72, 40, 105),    # #482869 - mid
+    (110, 70, 155),   # #6E469B - lighter accent (~5% only)
+]
+# State color overrides (r, g, b) — particles tint toward these
+_STATE_COLORS = {
+    "awaiting":       None,              # pure black — no connection yet
+    "portal_opening": None,              # pink+blue needle growing to idle
+    "idle":           None,              # violet palette
+    "command":        (40, 120, 220),    # blend of blues — deep sea blue
+    "terminal":       (140, 60, 220),    # purple — terminal command
+    "screenshot":     (220, 200, 40),    # yellow — screenshot in progress
+    "test_pulse":     (220, 30, 40),     # intense red
+    "paused":         (255, 180, 50),    # amber/yellow light
+    "feedme":         (40, 220, 100),    # green
+}
+
+
+def _flow_angle(x, y, t):
+    """Pseudo-noise flow field angle using overlapping sine waves.
+    This produces organic, non-repeating flow patterns similar to Perlin noise
+    but much faster in pure Python."""
+    n = (
+        math.sin(x * 0.012 + t * 0.20) +
+        math.cos(y * 0.010 + t * 0.15) +
+        math.sin((x + y) * 0.007 + t * 0.10) +
+        math.cos((x - y) * 0.009 + t * 0.08)
+    )
+    return n * math.pi
+
+
+def _pick_color(brightness, tint=None):
+    """Pick a color from the palette based on brightness (0-1).
+    If tint is (r,g,b), blend toward it."""
+    if brightness > 0.95:
+        idx = 4  # bright lavender (~5%)
+    elif brightness > 0.75:
+        idx = 3
+    elif brightness > 0.50:
+        idx = 2
+    elif brightness > 0.25:
+        idx = 1
+    else:
+        idx = 0
+    r, g, b = _DM_COLORS[idx]
+    if tint:
+        blend = 0.4
+        r = int(r + (tint[0] - r) * blend)
+        g = int(g + (tint[1] - g) * blend)
+        b = int(b + (tint[2] - b) * blend)
+    return r, g, b
+
+
+class DarkMatterParticle:
+    """A tiny near-black particle drifting inside the dimensional tear."""
+    __slots__ = ("x", "y", "vx", "vy", "size", "base_alpha", "brightness",
+                 "layer", "life", "max_life", "angle", "radius_frac",
+                 "noise_offset")
+
+    def __init__(self, cx, cy, base_r, layer):
+        self.layer = layer
+        self.angle = random.random() * math.pi * 2
+        self.radius_frac = random.random() ** 0.5 * 0.5
+        self.x = cx + math.cos(self.angle) * base_r * self.radius_frac
+        self.y = cy + math.sin(self.angle) * base_r * self.radius_frac
+        self.vx = 0.0
+        self.vy = 0.0
+        self.size = (0.4 + random.random() * 0.6) if layer == 0 else                     (0.6 + random.random() * 0.8) if layer == 1 else                     (0.8 + random.random() * 1.0)
+        self.base_alpha = (3 + random.random() * 5) if layer == 0 else                           (5 + random.random() * 8) if layer == 1 else                           (8 + random.random() * 10)
+        self.brightness = random.random()
+        self.max_life = 4.0 + random.random() * 10.0
+        self.life = random.random() * self.max_life
+        self.noise_offset = random.random() * 100
+
+    def update(self, dt, cx, cy, base_r, phase, speed_mul=1.0, tint=None):
+        """Independent wandering drift — each particle moves on its own."""
+        dx = self.x - cx
+        dy = self.y - cy
+        dist = math.sqrt(dx * dx + dy * dy) + 0.1
+        frac = dist / base_r
+
+        # Independent flow-field wander (no shared orbital direction)
+        angle = _flow_angle(self.x * 0.3, self.y * 0.3, phase * 0.3 + self.noise_offset)
+        flow_strength = (0.8 + self.layer * 0.3) * speed_mul
+        self.vx += math.cos(angle) * flow_strength * dt
+        self.vy += math.sin(angle) * flow_strength * dt
+
+        # Very gentle inward pull if drifting too far
+        if frac > 0.55:
+            pull = (frac - 0.55) * 6.0
+            self.vx -= (dx / dist) * pull * dt
+            self.vy -= (dy / dist) * pull * dt
+
+        # Damping
+        self.vx *= 0.992
+        self.vy *= 0.992
+
+        # Move slowly
+        self.x += self.vx * dt * 20
+        self.y += self.vy * dt * 20
+
+        # Life cycle
+        self.life += dt
+        if self.life > self.max_life:
+            self._respawn(cx, cy, base_r)
+
+        # Clamp to center area
+        dist_from_center = math.sqrt((self.x - cx) ** 2 + (self.y - cy) ** 2)
+        if dist_from_center > base_r * 0.6:
+            self._respawn(cx, cy, base_r)
+
+    def _respawn(self, cx, cy, base_r):
+        self.angle = random.random() * math.pi * 2
+        self.radius_frac = random.random() ** 0.5 * 0.45
+        self.x = cx + math.cos(self.angle) * base_r * self.radius_frac
+        self.y = cy + math.sin(self.angle) * base_r * self.radius_frac
+        self.vx = 0.0
+        self.vy = 0.0
+        self.life = 0.0
+        self.max_life = 4.0 + random.random() * 10.0
+        self.brightness = random.random()
+
+    @property
+    def alpha(self):
+        t = self.life / self.max_life
+        if t < 0.2:
+            return int(self.base_alpha * (t / 0.2))
+        elif t > 0.8:
+            return int(self.base_alpha * ((1.0 - t) / 0.2))
+        return int(self.base_alpha)
+
+# ------------------------------------------------------------------
+# UI: fluid dark-matter container (atmospheric, not a disc)
+# ------------------------------------------------------------------
+class CircularGlassFrame(QFrame):
+    """Atmospheric dark-matter backdrop — fluid, breathing, never a perfect circle."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self._border_alpha = 35
+        self._phase = random.random() * math.pi * 2
+        self._elapsed = QElapsedTimer()
+        self._elapsed.start()
+        self._last_ms = 0
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(16)
+
+    def set_border_alpha(self, alpha):
+        self._border_alpha = alpha
+        self.update()
+
+    def _blob_path(self, cx, cy, base_r, phase, detail=72, seed=0.0, intensity=0.10):
+        """Generate an organic blob path. Uses its own phase for independent motion."""
+        path = QPainterPath()
+        pts = []
+        for i in range(detail):
+            angle = 2 * math.pi * i / detail
+            wave = (
+                math.sin(angle * 2 + phase + seed) * 0.45 +
+                math.cos(angle * 3 - phase * 1.1 + seed) * 0.30 +
+                math.sin(angle * 5 + phase * 0.6 + seed) * 0.22 +
+                math.cos(angle * 8 - phase * 0.4 + seed * 1.7) * 0.14 +
+                math.sin(angle * 13 + phase * 0.25 + seed) * 0.09 +
+                math.cos(angle * 21 + phase * 0.15 + seed) * 0.05
+            )
+            r = base_r * (1 + wave * intensity)
+            x = cx + math.cos(angle) * r
+            y = cy + math.sin(angle) * r
+            pts.append((x, y))
+
+        mid = lambda a, b: ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        path.moveTo(*mid(pts[-1], pts[0]))
+        for i in range(detail):
+            p1 = pts[i]
+            p2 = pts[(i + 1) % detail]
+            m = mid(p1, p2)
+            path.quadTo(*p1, *m)
+        return path
+
+    def _tick(self):
+        now = self._elapsed.elapsed()
+        dt = min((now - self._last_ms) / 1000.0, 0.1)
+        self._last_ms = now
+        # Slow breathing
+        self._phase += dt * 0.35
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        side = min(w, h)
+        cx, cy = w / 2, h / 2
+        radius = side / 2 - 4
+
+        # Multiple fluid dark layers — each breathes independently
+        # Outermost is the largest, innermost is darkest
+        for i in range(4):
+            frac = 0.96 - i * 0.04
+            r = radius * frac
+            # Each layer rotates in alternating direction for opposing motion
+            layer_phase = self._phase * (0.8 if i % 2 == 0 else -0.6) + i * 1.3
+            intensity = 0.08 + i * 0.02
+            blob = self._blob_path(cx, cy, r, layer_phase, intensity=intensity)
+
+            # Very dark purple-black fill, getting darker toward center
+            darkness = 6 + i * 2
+            grad = QRadialGradient(cx, cy, r)
+            grad.setColorAt(0, QColor(darkness, darkness - 2, darkness + 4, 225 - i * 20))
+            grad.setColorAt(0.7, QColor(darkness - 2, darkness - 3, darkness, 235 - i * 15))
+            grad.setColorAt(1, QColor(darkness - 4, darkness - 4, darkness - 2, 0))
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(grad))
+            painter.drawPath(blob)
+
+        painter.end()
+
+# ------------------------------------------------------------------
+# UI: dimensional tear orb widget
+# ------------------------------------------------------------------
+class OrbWidget(QWidget):
+    """A dimensional tear in reality — dark center, fluid edge energy, state-driven.
+
+    Rendering order:
+      1. Black center
+      2. Drifting dark particles
+      3. Outer dark fluid field (breathing, morphing, never circular)
+      4. Thin magical energy edge (multiple translucent wispy layers)
+      5. Optional glow (state dependent)
+
+    States:
+      idle         - almost asleep, very slow, very dark
+      command      - turquoise edge energy
+      test_pulse   - red breathing heartbeat glow at edge
+      paused       - solid amber eclipse, barely moving
+      feedme       - portal waking up, faster, more layers, brighter
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(260, 260)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+
+        # Two independent phases for opposing motion
+        self._field_phase = random.random() * math.pi * 2   # outer dark field (CCW)
+        self._edge_phase = random.random() * math.pi * 2     # magical edge (CW)
+        self._state = "awaiting"  # starts with no connection
+
+        # Smoothly interpolated state values
+        self._scale = 1.0
+        self._target_scale = 1.0
+        self._speed_mul = 1.0
+        self._target_speed_mul = 1.0
+        self._glow = 0.0
+        self._target_glow = 0.0
+        self._edge_layers = 3
+        self._target_edge_layers = 3
+        self._edge_intensity = 0.08
+        self._target_edge_intensity = 0.08
+        self._tint = None
+        self._target_tint = None
+        self._tint_blend = 0.0
+        self._target_tint_blend = 0.0
+
+        self._pulse_phase = 0.0
+        self._breath_phase = 0.0
+        self._morph_phase = 0.0  # slow shape evolution — the portal breathes and shifts
+        self._pause_breath = 1.0  # 0..1, size modulation for paused state
+        self._pulse_breath = 1.0  # 0..1, size modulation for pulse state
+        self._crack_morph = 0.0
+        self._target_crack_morph = 0.0
+        self._vortex_strength = 0.0
+        self._target_vortex_strength = 0.0
+        self._alert_flash = 0.0
+        self._portal_opening_progress = 0.0  # 0..1, grows during portal_opening
+
+        # Mouse interaction state — all smoothly interpolated
+        self._mouse_x = 0.0       # actual mouse position
+        self._mouse_y = 0.0
+        self._mouse_active = False
+        self._proximity = 0.0      # 0..1, how close the mouse is (smoothed)
+        self._target_proximity = 0.0
+        self._lean_x = 0.0         # portal leans toward mouse (smoothed)
+        self._target_lean_x = 0.0
+        self._lean_y = 0.0
+        self._target_lean_y = 0.0
+        # Click ripples — list of {x, y, age, max_age}
+        self._ripples = []
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+        self._particles = []
+        self._initialized = False
+
+        self._elapsed = QElapsedTimer()
+        self._elapsed.start()
+        self._last_ms = 0
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(16)
+
+    def _lerp(self, a, b, t):
+        return a + (b - a) * t
+
+    def mouseMoveEvent(self, event):
+        pos = event.position()
+        self._mouse_x = pos.x()
+        self._mouse_y = pos.y()
+        self._mouse_active = True
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        dx = self._mouse_x - cx
+        dy = self._mouse_y - cy
+        dist = math.sqrt(dx * dx + dy * dy)
+        side = min(w, h)
+        max_dist = side * 0.7
+        # Proximity: 1 when mouse is at center, 0 when far away
+        self._target_proximity = max(0, 1.0 - dist / max_dist)
+        # Lean: subtle shift toward mouse (normalized direction, scaled by proximity)
+        if dist > 0.1:
+            self._target_lean_x = (dx / dist) * self._target_proximity * 0.06
+            self._target_lean_y = (dy / dist) * self._target_proximity * 0.06
+
+    def leaveEvent(self, event):
+        self._mouse_active = False
+        self._target_proximity = 0.0
+        self._target_lean_x = 0.0
+        self._target_lean_y = 0.0
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            self._ripples.append({
+                "x": pos.x(),
+                "y": pos.y(),
+                "age": 0.0,
+                "max_age": 2.5,
+            })
+
+    def _init_particles(self):
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        side = min(w, h)
+        base_r = side * 0.35
+
+        # Sparse particles for the dark center
+        counts = [60, 35, 15]
+        self._particles = []
+        for layer, count in enumerate(counts):
+            for _ in range(count):
+                p = DarkMatterParticle(cx, cy, base_r, layer=layer)
+                p.size *= 0.5
+                p.base_alpha = int(p.base_alpha * 0.3)
+                self._particles.append(p)
+        self._initialized = True
+
+    def _tick(self):
+        now = self._elapsed.elapsed()
+        dt = min((now - self._last_ms) / 1000.0, 0.1)
+        self._last_ms = now
+
+        # Breathing — very slow
+        self._breath_phase += dt * 0.4
+        self._pulse_phase += dt * 1.5
+        # Morph — very slow shape evolution, makes the portal feel alive without spinning fast
+        # Faster in active states, slower in dormant. Dormant ("awaiting") stays calm,
+        # everything else gets a touch more motion so the portal feels alive once open.
+        if self._state == "awaiting":
+            morph_rate = 0.08
+        elif self._state == "idle":
+            morph_rate = 0.20
+        else:
+            morph_rate = 0.32
+        self._morph_phase += dt * morph_rate
+        breath = 0.5 + 0.5 * math.sin(self._breath_phase)  # 0..1
+
+        # Smooth state transitions — faster so return-to-idle doesn't drag
+        ease = 1.0 - math.exp(-dt * 6.0)
+
+        # Paused: visible size breathing — shrinks to near needle-point and back
+        # Proximity quickens the breath slightly
+        if self._state == "paused":
+            pause_rate = 0.7 * (1.0 + self._proximity * 0.4)
+            # 0.08 at minimum (needle point), 1.0 at maximum (full pause size)
+            self._pause_breath = 0.08 + 0.92 * (0.5 + 0.5 * math.sin(self._breath_phase * pause_rate))
+        else:
+            # Fast recovery when leaving paused — don't mess up other modes
+            fast_ease = 1.0 - math.exp(-dt * 15.0)
+            self._pause_breath = self._lerp(self._pause_breath, 1.0, fast_ease)
+
+        # Pulse: size pulses between ~0.65 and ~1.15
+        if self._state == "test_pulse":
+            pulse_rate = 2.5 * (1.0 + self._proximity * 0.3)
+            self._pulse_breath = 0.65 + 0.50 * (0.5 + 0.5 * math.sin(self._pulse_phase * pulse_rate))
+        else:
+            fast_ease = 1.0 - math.exp(-dt * 15.0)
+            self._pulse_breath = self._lerp(self._pulse_breath, 1.0, fast_ease)
+
+        # Crack morph: inert (always targets 0, kept for compatibility)
+        self._crack_morph = self._lerp(self._crack_morph, self._target_crack_morph, ease)
+
+        # Vortex strength: builds up in feedme, decays otherwise
+        self._vortex_strength = self._lerp(self._vortex_strength, self._target_vortex_strength, ease)
+
+        # Alert flash decays — fast, split-second flash
+        if self._alert_flash > 0:
+            self._alert_flash = max(0, self._alert_flash - dt * 5.0)
+
+        # Portal opening: progress grows from 0 to 1, then transitions to idle
+        if self._state == "portal_opening":
+            self._portal_opening_progress = min(1.0, self._portal_opening_progress + dt * 0.4)
+            if self._portal_opening_progress >= 1.0:
+                self.set_state("idle")
+        else:
+            # Reset progress when not in portal_opening (so it can replay)
+            if self._state != "awaiting" and self._portal_opening_progress > 0:
+                self._portal_opening_progress = max(0, self._portal_opening_progress - dt * 2.0)
+
+        self._scale = self._lerp(self._scale, self._target_scale, ease)
+        self._speed_mul = self._lerp(self._speed_mul, self._target_speed_mul, ease)
+        self._glow = self._lerp(self._glow, self._target_glow, ease)
+        self._edge_layers = self._lerp(self._edge_layers, self._target_edge_layers, ease)
+        self._edge_intensity = self._lerp(self._edge_intensity, self._target_edge_intensity, ease)
+        self._tint_blend = self._lerp(self._tint_blend, self._target_tint_blend, ease)
+        # Tint color: set immediately (no interpolation needed — the blend handles the fade)
+        self._tint = self._target_tint
+
+        # Mouse interaction — slower ease so it feels organic, not snappy
+        mouse_ease = 1.0 - math.exp(-dt * 2.0)
+        self._proximity = self._lerp(self._proximity, self._target_proximity, mouse_ease)
+        self._lean_x = self._lerp(self._lean_x, self._target_lean_x, mouse_ease)
+        self._lean_y = self._lerp(self._lean_y, self._target_lean_y, mouse_ease)
+
+        # Age and remove ripples
+        for r in self._ripples:
+            r["age"] += dt
+        self._ripples = [r for r in self._ripples if r["age"] < r["max_age"]]
+
+        # Opposing motion: field goes CCW (negative), edge goes CW (positive)
+        prox_boost = 1.0 + self._proximity * 0.6
+        # Active states get a modest motion boost so the open portal feels alive;
+        # dormant/awaiting keeps its slow, calm drift (speed_mul is already low there).
+        active_boost = 1.0 if self._state == "awaiting" else 1.25
+        if self._state == "feedme":
+            field_speed = 0.30 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost * active_boost
+            edge_speed = 0.60 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost * active_boost
+        elif self._state == "test_pulse":
+            field_speed = 0.20 * self._speed_mul * prox_boost
+            edge_speed = 0.25 * self._speed_mul * prox_boost
+        else:
+            field_speed = 0.40 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost * active_boost
+            edge_speed = 0.52 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost * active_boost
+        self._field_phase -= dt * field_speed  # counter-clockwise
+        self._edge_phase += dt * edge_speed    # clockwise
+
+        if self._initialized:
+            w, h = self.width(), self.height()
+            cx, cy = w / 2, h / 2
+            base_r = min(w, h) * 0.35 * self._scale
+            for p in self._particles:
+                p.update(dt, cx, cy, base_r, self._field_phase, speed_mul=self._speed_mul)
+
+        self.update()
+
+    def set_state(self, state):
+        self._state = state
+        sc = _STATE_COLORS.get(state)
+        # Default: no crack, no vortex
+        self._target_crack_morph = 0.0
+        self._target_vortex_strength = 0.0
+        if state == "awaiting":
+            # Pure black empty space — no particles, no edge energy
+            self._target_scale = 1.0
+            self._target_speed_mul = 0.3
+            self._target_glow = 0.0
+            self._target_edge_layers = 0
+            self._target_edge_intensity = 0.0
+            self._target_tint = None
+            self._target_tint_blend = 0.0
+            self._portal_opening_progress = 0.0
+        elif state == "portal_opening":
+            # Needle point that grows — pink+blue colors fading to violet
+            self._target_scale = 1.0
+            self._target_speed_mul = 0.8
+            self._target_glow = 0.0
+            self._target_edge_layers = 3
+            self._target_edge_intensity = 0.08
+            self._target_tint = None
+            self._target_tint_blend = 0.0
+            # Don't reset progress here — it grows in _tick
+        elif state == "idle":
+            self._target_scale = 1.0
+            self._target_speed_mul = 1.0
+            self._target_glow = 0.0
+            self._target_edge_layers = 3
+            self._target_edge_intensity = 0.08
+            self._target_tint = None
+            self._target_tint_blend = 0.0
+        elif state == "command":
+            self._target_scale = 1.08
+            self._target_speed_mul = 2.0
+            self._target_glow = 0.0
+            self._target_edge_layers = 6
+            self._target_edge_intensity = 0.06
+            self._target_tint = sc
+            self._target_tint_blend = 0.6
+        elif state == "terminal":
+            self._target_scale = 1.08
+            self._target_speed_mul = 2.5
+            self._target_glow = 0.0
+            self._target_edge_layers = 6
+            self._target_edge_intensity = 0.06
+            self._target_tint = sc
+            self._target_tint_blend = 0.6
+        elif state == "screenshot":
+            self._target_scale = 1.08
+            self._target_speed_mul = 1.5
+            self._target_glow = 0.0
+            self._target_edge_layers = 6
+            self._target_edge_intensity = 0.06
+            self._target_tint = sc
+            self._target_tint_blend = 0.6
+        elif state == "test_pulse":
+            self._target_scale = 1.0
+            self._target_speed_mul = 0.4
+            self._target_glow = 0.0
+            self._target_edge_layers = 4
+            self._target_edge_intensity = 0.04
+            self._target_tint = sc
+            self._target_tint_blend = 0.8
+        elif state == "paused":
+            self._target_scale = 0.32
+            self._target_speed_mul = 0.08
+            self._target_glow = 0.0
+            self._target_edge_layers = 2
+            self._target_edge_intensity = 0.03
+            self._target_tint = sc
+            self._target_tint_blend = 0.95
+        elif state == "feedme":
+            self._target_scale = 1.0
+            self._target_speed_mul = 2.0
+            self._target_glow = 0.0
+            self._target_edge_layers = 6
+            self._target_edge_intensity = 0.06
+            self._target_tint = sc
+            self._target_tint_blend = 0.6
+            self._target_vortex_strength = 1.0
+
+    def flash_command(self):
+        """Brief blue energy flash for regular commands."""
+        previous = self._state
+        self.set_state("command")
+        QTimer.singleShot(1200, lambda: self.set_state(previous if previous != "command" else "idle"))
+
+    def flash_terminal(self):
+        """Brief purple energy flash for terminal commands."""
+        previous = self._state
+        self.set_state("terminal")
+        QTimer.singleShot(1500, lambda: self.set_state(previous if previous != "terminal" else "idle"))
+
+    def start_screenshot(self):
+        """Yellow glow lingers while a screenshot is being taken/sent."""
+        self.set_state("screenshot")
+
+    def end_screenshot(self):
+        """Screenshot is done — fade back to idle."""
+        self.set_state("idle")
+
+    def flash_alert(self):
+        """Quick pink ring flash — split-second burst on incoming messages."""
+        self._alert_flash = 1.0
+
+    def start_portal_opening(self):
+        """Begin the portal opening animation — needle point grows to idle."""
+        self._portal_opening_progress = 0.0
+        self.set_state("portal_opening")
+
+    def set_paused(self, paused):
+        if paused:
+            self.set_state("paused")
+        else:
+            self.set_state("idle")
+
+    def _blob_path(self, cx, cy, base_r, phase, detail=72, seed=0.0, intensity=0.08, morph=0.0):
+        """Organic blob with many harmonics for fluid, non-repeating motion.
+        morph: a slow secondary phase that changes the waviness shape itself over time,
+        so the blob doesn't just rotate — it actually morphs.
+        The morph influence is bounded so the shape never spreads too wide."""
+        path = QPainterPath()
+        pts = []
+        # Bound the morph influence to 0..1 — oscillates, never grows unboundedly
+        # This keeps the shape in the subtle "teeth" range, never spreading into a flower
+        morph_strength = 0.5 + 0.5 * math.sin(morph * 0.3)  # 0..1, slow oscillation
+        for i in range(detail):
+            angle = 2 * math.pi * i / detail
+            # Primary harmonics — rotate with phase
+            wave = (
+                math.sin(angle * 2 + phase + seed) * 0.45 +
+                math.cos(angle * 3 - phase * 1.1 + seed) * 0.30 +
+                math.sin(angle * 5 + phase * 0.6 + seed) * 0.22 +
+                math.cos(angle * 8 - phase * 0.4 + seed * 1.7) * 0.14 +
+                math.sin(angle * 13 + phase * 0.25 + seed) * 0.09 +
+                math.cos(angle * 21 + phase * 0.15 + seed) * 0.05
+            )
+            # Secondary morph — slowly shifts the harmonic weights so the shape evolves
+            # Capped by morph_strength so it never spreads too wide
+            if morph != 0.0:
+                wave += (
+                    math.sin(angle * 3 + morph * 0.7 + seed * 2.0) * 0.15 +
+                    math.cos(angle * 7 + morph * 0.5 + seed * 1.3) * 0.10 +
+                    math.sin(angle * 11 + morph * 0.3 + seed) * 0.06
+                ) * morph_strength
+            r = base_r * (1 + wave * intensity)
+            x = cx + math.cos(angle) * r
+            y = cy + math.sin(angle) * r
+            pts.append((x, y))
+
+        mid = lambda a, b: ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        path.moveTo(*mid(pts[-1], pts[0]))
+        for i in range(detail):
+            p1 = pts[i]
+            p2 = pts[(i + 1) % detail]
+            m = mid(p1, p2)
+            path.quadTo(*p1, *m)
+        return path
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        w, h = self.width(), self.height()
+        side = min(w, h)
+        cx, cy = w / 2, h / 2
+        clip_r = side / 2
+
+        # Clip to a circle (the widget bounds)
+        clip = QPainterPath()
+        clip.addEllipse(QPointF(cx, cy), clip_r, clip_r)
+        painter.setClipPath(clip)
+
+        if not self._initialized and w > 0 and h > 0:
+            self._init_particles()
+
+        base_r = side * 0.40 * self._scale
+        if self._pause_breath < 0.999:
+            base_r *= self._pause_breath
+        if self._pulse_breath != 1.0 and self._state == "test_pulse":
+            base_r *= self._pulse_breath
+        # Awaiting: orb shrinks to near nothing — empty space
+        if self._state == "awaiting":
+            base_r *= 0.02
+        # Portal opening: needle point grows from 0.02 to 1.0
+        if self._state == "portal_opening":
+            prog = self._portal_opening_progress
+            base_r *= 0.02 + 0.98 * prog
+        # Gentle whole-portal breathing — very subtle, makes it feel alive
+        # Only in idle and colored states (not paused/pulse which have their own size behavior)
+        if self._state not in ("paused", "test_pulse", "awaiting", "portal_opening"):
+            breath_scale = 1.0 + 0.03 * math.sin(self._breath_phase * 0.6)
+            base_r *= breath_scale
+
+        # Apply lean — the portal subtly shifts toward the mouse
+        cx += self._lean_x * base_r
+        cy += self._lean_y * base_r
+
+        # Proximity makes the edge subtly brighter — the portal is aware of you
+        prox_glow = self._proximity * 0.15  # very subtle
+
+        # State color
+        tint = self._tint if self._tint_blend > 0.01 else None
+
+        # ---- 1. Black center ----
+        center_grad = QRadialGradient(cx, cy, base_r * 0.7)
+        center_grad.setColorAt(0, QColor(0, 0, 0, 255))
+        center_grad.setColorAt(0.6, QColor(2, 1, 4, 250))
+        center_grad.setColorAt(1, QColor(4, 2, 8, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(center_grad))
+        painter.drawEllipse(QPointF(cx, cy), base_r * 0.7, base_r * 0.7)
+
+        # ---- 2. Drifting dark particles (skip in awaiting state) ----
+        if self._state != "awaiting":
+            for p in self._particles:
+                dist_from_center = math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2)
+                if dist_from_center > base_r * 0.55:
+                    continue
+                a = p.alpha
+                if a <= 0:
+                    continue
+                # Near-black, barely visible
+                shade = int(5 + p.brightness * 8)
+                c = QColor(shade, shade, shade + 1, a)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(c))
+                painter.drawEllipse(QPointF(p.x, p.y), p.size * 0.5, p.size * 0.5)
+
+        # ---- 3. Outer dark fluid field (breathing, morphing) — the "intestines" ----
+        # Multiple layers, each with its own phase for fluid smoke effect
+        # Field rotates counter-clockwise (field_phase decreases)
+        # In colored states, the intestines themselves glow with the state's tint
+        num_field_layers = 4
+        # Subtle pulse for active states — the intestines breathe a bit brighter
+        state_pulse = 0.0
+        if self._tint_blend > 0.1:
+            state_pulse = 0.5 + 0.5 * math.sin(self._pulse_phase * 2.0)
+        for i in range(num_field_layers):
+            frac = 0.72 + i * 0.07
+            r = base_r * frac
+            # Each layer breathes independently, alternating direction slightly
+            layer_phase = self._field_phase + i * 0.8
+            layer_intensity = 0.06 + i * 0.015
+            # Morph: each layer evolves its shape slowly, offset by index
+            layer_morph = self._morph_phase + i * 1.3
+            blob = self._blob_path(cx, cy, r, layer_phase, seed=i * 2.1,
+                                   intensity=layer_intensity, morph=layer_morph)
+
+            # Very dark, slightly purple — base color
+            darkness = 8 + i * 3
+            base_r_c = darkness
+            base_g_c = darkness - 3
+            base_b_c = darkness + 6
+
+            # In colored states, blend the dark field toward the tint color
+            # The intestines themselves light up — same structure, just color-coded
+            if tint and self._tint_blend > 0.01:
+                tr, tg, tb = tint
+                blend = self._tint_blend * (0.45 + 0.15 * state_pulse)
+                base_r_c = int(darkness * (1 - blend) + tr * blend)
+                base_g_c = int((darkness - 3) * (1 - blend) + tg * blend)
+                base_b_c = int((darkness + 6) * (1 - blend) + tb * blend)
+
+            grad = QRadialGradient(cx, cy, r)
+            grad.setColorAt(0, QColor(base_r_c, base_g_c, base_b_c, 180 - i * 25))
+            grad.setColorAt(0.6, QColor(base_r_c - 2, base_g_c - 1, base_b_c - 4, 190 - i * 20))
+            grad.setColorAt(1, QColor(base_r_c - 4, base_g_c - 2, base_b_c - 6, 0))
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(grad))
+            painter.drawPath(blob)
+
+        # ---- 4. Thin magical energy edge (wispy translucent layers) ----
+        # Edge rotates clockwise (edge_phase increases) — opposing the field
+        # Multiple translucent layers at slightly different radii = energy, not a stroke
+        edge_base_r = base_r * 0.93
+        num_edge = int(self._edge_layers + 0.5)
+        for i in range(num_edge):
+            offset = (i - num_edge / 2) * 0.015
+            r = edge_base_r * (1 + offset)
+            layer_seed = i * 1.7
+            layer_intensity = self._edge_intensity * (1.0 + i * 0.1)
+            edge_morph = self._morph_phase * 0.8 + i * 0.9
+            blob = self._blob_path(cx, cy, r, self._edge_phase, seed=layer_seed,
+                                   intensity=layer_intensity, morph=edge_morph)
+
+            # Color: idle = faint dark purple, states = tinted
+            if tint:
+                base_r_c, base_g_c, base_b_c = tint
+                blend = self._tint_blend
+                # Command: alternate between deep blue and lighter blue per layer
+                if self._state == "command":
+                    if i % 2 == 0:
+                        base_r_c, base_g_c, base_b_c = 30, 100, 220   # deep blue
+                    else:
+                        base_r_c, base_g_c, base_b_c = 60, 150, 240   # lighter blue
+            else:
+                base_r_c, base_g_c, base_b_c = 90, 45, 110
+                blend = 1.0
+
+            # Colored states: many extremely thin faint lines (premium, minimalist)
+            # Idle: fewer, slightly thicker (unchanged)
+            if self._tint_blend > 0.1:
+                # Colored state — thin threads with a gentle pulse, visible but not cartoonish
+                edge_pulse = 0.5 + 0.5 * math.sin(self._pulse_phase * 2.0 + i * 0.5)
+                layer_alpha = int((14 + i * 4) * (0.5 + (self._glow + prox_glow) * 0.5 + 0.3 + edge_pulse * 0.2))
+                layer_alpha = min(255, layer_alpha)
+                wisp_width = 0.5 + (num_edge - i) * 0.10
+            else:
+                # Idle — keep original feel
+                layer_alpha = int((18 + i * 5) * (0.5 + (self._glow + prox_glow) * 0.5 + 0.3))
+                layer_alpha = min(255, layer_alpha)
+                wisp_width = 1.2 + (num_edge - i) * 0.6
+
+            pen = QPen(QColor(
+                int(base_r_c * blend + 30 * (1 - blend)),
+                int(base_g_c * blend + 15 * (1 - blend)),
+                int(base_b_c * blend + 40 * (1 - blend)),
+                layer_alpha
+            ))
+            pen.setWidthF(wisp_width)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(blob)
+
+        # ---- 5. Portal opening: needle point grows, pink+blue fading to violet ----
+        if self._state == "portal_opening":
+            prog = self._portal_opening_progress  # 0..1
+            # Color shifts from pink+blue to violet as it grows
+            # Pink (255, 80, 200) + Blue (40, 120, 220) → Violet (90, 45, 110)
+            if prog < 0.5:
+                # First half: mostly pink+blue
+                t_color = prog * 2.0  # 0..1
+                r = int(255 * (1 - t_color) + 90 * t_color)
+                g = int(80 * (1 - t_color) + 45 * t_color)
+                b = int(200 * (1 - t_color) + 110 * t_color)
+            else:
+                # Second half: transition to violet
+                t_color = (prog - 0.5) * 2.0  # 0..1
+                r = int(90 * (1 - t_color) + 90 * t_color)
+                g = int(45 * (1 - t_color) + 45 * t_color)
+                b = int(110 * (1 - t_color) + 110 * t_color)
+            # Wavy blob that gets bigger and more wavy as it grows
+            open_r = base_r * (0.5 + 0.4 * prog)
+            wavy_intensity = 0.04 + 0.08 * prog  # more wavy as it grows
+            open_blob = self._blob_path(cx, cy, open_r, self._edge_phase,
+                                        seed=1.0, intensity=wavy_intensity)
+            # Glow gradient — brighter at needle point, softer as it grows
+            glow_alpha = int(120 * (1.0 - prog * 0.5))
+            open_grad = QRadialGradient(cx, cy, open_r)
+            open_grad.setColorAt(0, QColor(r, g, b, glow_alpha))
+            open_grad.setColorAt(0.3, QColor(r, g, b, glow_alpha // 2))
+            open_grad.setColorAt(0.7, QColor(r // 2, g // 2, b // 2, glow_alpha // 4))
+            open_grad.setColorAt(1, QColor(0, 0, 0, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(open_grad))
+            painter.drawPath(open_blob)
+
+            # Secondary blue glow that fades as it grows
+            if prog < 0.7:
+                blue_alpha = int(80 * (1.0 - prog / 0.7))
+                blue_r = base_r * (0.3 + 0.3 * prog)
+                blue_blob = self._blob_path(cx, cy, blue_r, self._field_phase,
+                                            seed=2.0, intensity=0.06 + 0.06 * prog)
+                blue_grad = QRadialGradient(cx, cy, blue_r)
+                blue_grad.setColorAt(0, QColor(40, 120, 220, blue_alpha))
+                blue_grad.setColorAt(0.5, QColor(30, 80, 180, blue_alpha // 2))
+                blue_grad.setColorAt(1, QColor(10, 30, 80, 0))
+                painter.setBrush(QBrush(blue_grad))
+                painter.drawPath(blue_blob)
+
+        # ---- 6. State-specific overlays ----
+        # Command, terminal, screenshot, feedme: NO separate overlay needed —
+        # the intestines (field layers) and edge layers already glow with the state's tint.
+        # The color-coded rings ARE the animation. Same structure as idle, just lit up.
+
+        # ---- Paused: breathing amber light — the special case (needle point + amber) ----
+        if self._state == "paused" and self._tint_blend > 0.5:
+            prox_breath_boost = 1.0 + self._proximity * 0.6
+            breath_paused = 0.5 + 0.5 * math.sin(self._breath_phase * 0.8 * prox_breath_boost)
+            bright = 0.7 + 0.3 * breath_paused + self._proximity * 0.08
+
+            # Core amber glow — contained at base_r * 0.75, wavy blob, soft falloff
+            core_r = base_r * (0.65 + 0.10 * breath_paused)
+            core_blob = self._blob_path(cx, cy, core_r, self._edge_phase,
+                                        seed=1.0, intensity=0.12 + 0.04 * breath_paused)
+            core_grad = QRadialGradient(cx, cy, core_r)
+            core_grad.setColorAt(0, QColor(min(255, int(255 * bright)), min(255, int(190 * bright)), min(255, int(70 * bright)), 140))
+            core_grad.setColorAt(0.25, QColor(min(255, int(220 * bright)), min(255, int(150 * bright)), min(255, int(45 * bright)), 80))
+            core_grad.setColorAt(0.55, QColor(180, 110, 30, 35))
+            core_grad.setColorAt(1, QColor(100, 60, 20, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(core_grad))
+            painter.drawPath(core_blob)
+
+            # Outer warm haze — contained at base_r * 0.95, wavy, always present
+            haze_r = base_r * (0.90 + 0.05 * breath_paused + self._proximity * 0.03)
+            haze_blob = self._blob_path(cx, cy, haze_r, self._field_phase,
+                                        seed=2.0, intensity=0.10 + 0.04 * breath_paused)
+            haze_alpha = int(12 + 15 * breath_paused + self._proximity * 10)
+            haze_grad = QRadialGradient(cx, cy, haze_r)
+            haze_grad.setColorAt(0, QColor(255, 180, 60, 0))
+            haze_grad.setColorAt(0.4, QColor(200, 130, 40, haze_alpha // 3))
+            haze_grad.setColorAt(0.75, QColor(180, 110, 30, haze_alpha))
+            haze_grad.setColorAt(1, QColor(100, 60, 20, 0))
+            painter.setBrush(QBrush(haze_grad))
+            painter.drawPath(haze_blob)
+
+        # ---- Pulse: red diffuse glow — contained, mirrors paused style ----
+        if self._state == "test_pulse" and self._tint_blend > 0.5:
+            pulse_rate = 2.5 * (1.0 + self._proximity * 0.3)
+            pulse_val = 0.5 + 0.5 * math.sin(self._pulse_phase * pulse_rate)
+            bright = 0.6 + 0.4 * pulse_val + self._proximity * 0.1
+
+            # Core red glow — contained at base_r * 0.70, wavy blob
+            core_r = base_r * (0.60 + 0.10 * pulse_val)
+            core_blob = self._blob_path(cx, cy, core_r, self._edge_phase,
+                                        seed=1.0, intensity=0.12 + 0.04 * pulse_val)
+            core_grad = QRadialGradient(cx, cy, core_r)
+            core_grad.setColorAt(0, QColor(min(255, int(220 * bright)), min(255, int(30 * bright)), min(255, int(35 * bright)), 130))
+            core_grad.setColorAt(0.25, QColor(min(255, int(180 * bright)), min(255, int(25 * bright)), min(255, int(30 * bright)), 70))
+            core_grad.setColorAt(0.55, QColor(140, 20, 25, 30))
+            core_grad.setColorAt(1, QColor(80, 10, 15, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(core_grad))
+            painter.drawPath(core_blob)
+
+            # Outer red haze — contained at base_r * 0.92, wavy
+            haze_r = base_r * (0.85 + 0.07 * pulse_val + self._proximity * 0.03)
+            haze_blob = self._blob_path(cx, cy, haze_r, self._field_phase,
+                                        seed=2.0, intensity=0.10 + 0.04 * pulse_val)
+            haze_alpha = int(12 + 15 * pulse_val + self._proximity * 10)
+            haze_grad = QRadialGradient(cx, cy, haze_r)
+            haze_grad.setColorAt(0, QColor(220, 30, 35, 0))
+            haze_grad.setColorAt(0.4, QColor(180, 25, 30, haze_alpha // 3))
+            haze_grad.setColorAt(0.75, QColor(160, 20, 25, haze_alpha))
+            haze_grad.setColorAt(1, QColor(80, 10, 15, 0))
+            painter.setBrush(QBrush(haze_grad))
+            painter.drawPath(haze_blob)
+
+        # ---- Feedme: no separate overlay — the intestines glow green via the tint blend ----
+
+        # ---- Alert flash: quick pink ring flash — split-second burst ----
+        if self._alert_flash > 0.01:
+            af = self._alert_flash  # 0..1, decays fast
+            # Big ring flash — expands from center, contained within base_r
+            # Ring radius grows quickly then fades
+            ring_r = base_r * (0.3 + 0.55 * (1.0 - af))  # expands as it fades
+            ring_blob = self._blob_path(cx, cy, ring_r, self._edge_phase,
+                                        seed=7.0, intensity=0.10 + 0.06 * af)
+            # Bright pink ring — feathered edges
+            ring_grad = QRadialGradient(cx, cy, ring_r)
+            ring_grad.setColorAt(0, QColor(255, 80, 200, 0))
+            ring_grad.setColorAt(0.85, QColor(255, 80, 200, int(40 * af)))
+            ring_grad.setColorAt(0.93, QColor(255, 100, 210, int(180 * af)))
+            ring_grad.setColorAt(0.98, QColor(255, 80, 200, int(100 * af)))
+            ring_grad.setColorAt(1, QColor(220, 60, 180, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(ring_grad))
+            painter.drawPath(ring_blob)
+
+            # Faded glow behind the ring
+            glow_r = base_r * 0.7
+            glow_blob = self._blob_path(cx, cy, glow_r, self._field_phase,
+                                        seed=8.0, intensity=0.08)
+            glow_grad = QRadialGradient(cx, cy, glow_r)
+            glow_grad.setColorAt(0, QColor(255, 80, 200, int(25 * af)))
+            glow_grad.setColorAt(0.5, QColor(220, 60, 180, int(15 * af)))
+            glow_grad.setColorAt(1, QColor(180, 40, 140, 0))
+            painter.setBrush(QBrush(glow_grad))
+            painter.drawPath(glow_blob)
+
+        # ---- Click ripples — disturbances in the dark matter ----
+        for r in self._ripples:
+            t = r["age"] / r["max_age"]  # 0..1
+            if t >= 1.0:
+                continue
+            # Ripple expands outward from click point
+            ripple_r = t * base_r * 1.2
+            # Fade out as it expands
+            ripple_alpha = int(60 * (1.0 - t) ** 2)
+            if ripple_alpha <= 0:
+                continue
+            # The ripple is a faint purple disturbance
+            ripple_color = QColor(80, 40, 100, ripple_alpha)
+            pen = QPen(ripple_color)
+            pen.setWidthF(2.0 * (1.0 - t * 0.5))
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(r["x"], r["y"]), ripple_r, ripple_r)
+
+            # Second, fainter wider ripple
+            ripple_alpha2 = int(30 * (1.0 - t) ** 2)
+            if ripple_alpha2 > 0:
+                pen2 = QPen(QColor(60, 30, 80, ripple_alpha2))
+                pen2.setWidthF(4.0 * (1.0 - t * 0.5))
+                painter.setPen(pen2)
+                painter.drawEllipse(QPointF(r["x"], r["y"]), ripple_r * 1.3, ripple_r * 1.3)
+
+        painter.end()
+
 
 # ------------------------------------------------------------------
 # Firebase worker — polls for sessions and results in background
@@ -108,26 +1175,37 @@ class FirebaseWorker(_QObj):
     def run(self):
         session_tick = 0
         while self._running:
+            # Each poll category is isolated so one failure doesn't suppress the others
+            # (e.g. a results poll error must not stop chat from being received).
             try:
-                # Poll sessions every ~3 seconds
                 if session_tick % 30 == 0:
                     self._poll_all_sessions()
                 session_tick += 1
-
-                # Poll results for watched sessions every ~1 second
-                for sid in list(self._watching_results.keys()):
-                    self._poll_results(sid)
-
-                # Poll for portal_opened confirmations
-                for sid in list(self._watching_opened):
-                    self._poll_opened(sid)
-
-                # Poll for incoming chat messages from watched sessions
-                for sid in list(self._watching_chat.keys()):
-                    self._poll_chat(sid)
             except Exception as e:
                 self._last_poll_error = str(e)
-                self.poll_status.emit(f"Poll error: {e}")
+                self.poll_status.emit(f"Session poll error: {e}")
+
+            for sid in list(self._watching_results.keys()):
+                try:
+                    self._poll_results(sid)
+                except Exception as e:
+                    self._last_poll_error = str(e)
+                    self.poll_status.emit(f"Result poll error: {e}")
+
+            for sid in list(self._watching_opened):
+                try:
+                    self._poll_opened(sid)
+                except Exception as e:
+                    self._last_poll_error = str(e)
+                    self.poll_status.emit(f"Opened poll error: {e}")
+
+            for sid in list(self._watching_chat.keys()):
+                try:
+                    self._poll_chat(sid)
+                except Exception as e:
+                    self._last_poll_error = str(e)
+                    self.poll_status.emit(f"Chat poll error: {e}")
+
             _threading.Event().wait(0.1)  # 100ms tick
 
     def _poll_all_sessions(self):
@@ -178,22 +1256,11 @@ class FirebaseWorker(_QObj):
             })
         self.sessions_updated.emit(sessions)
 
-
-def _is_stale(last_seen, minutes=5):
-    """Return True if last_seen is older than the given minutes."""
-    if not last_seen:
-        return True
-    try:
-        seen_dt = datetime.fromisoformat(last_seen)
-        return (datetime.now() - seen_dt).total_seconds() > minutes * 60
-    except Exception:
-        return True
-
     def _poll_results(self, session_id):
         data = _firebase_get(f"sessions/{session_id}/results")
         if not data:
             return
-        seen = self._watching_results.get(session_id, set())
+        seen = self._watching_results.setdefault(session_id, set())
         for cmd_id, result in data.items():
             if not isinstance(result, dict) or cmd_id in seen:
                 continue
@@ -217,17 +1284,31 @@ def _is_stale(last_seen, minutes=5):
         data = _firebase_get(f"sessions/{session_id}/chat")
         if not isinstance(data, dict):
             return
-        seen = self._watching_chat.get(session_id, set())
+        seen = self._watching_chat.setdefault(session_id, set())
         for msg_id, msg in data.items():
-            if not isinstance(msg, dict) or msg_id in seen:
+            if not isinstance(msg, dict):
                 continue
+            # Use the message's own id if present, else fall back to the Firebase child key
+            mid = msg.get("id", msg_id)
+            if mid in seen:
+                continue
+            seen.add(mid)
             # Only emit messages from the portal (not our own admin messages)
             sender = msg.get("sender", "")
             if sender == "admin":
-                seen.add(msg_id)
                 continue
-            seen.add(msg_id)
             self.chat_received.emit(session_id, msg)
+
+
+def _is_stale(last_seen, minutes=5):
+    """Return True if last_seen is older than the given minutes."""
+    if not last_seen:
+        return True
+    try:
+        seen_dt = datetime.fromisoformat(last_seen)
+        return (datetime.now() - seen_dt).total_seconds() > minutes * 60
+    except Exception:
+        return True
 
 
 # ------------------------------------------------------------------
@@ -245,15 +1326,18 @@ def send_command_to_session(session_id, cmd_type, **extra):
     return cmd["id"] if ok else None
 
 def send_chat_to_session(session_id, text, sender="admin"):
-    """Send a chat message to a portal session via Firebase."""
+    """Send a chat message to a portal session via Firebase.
+
+    Returns the message id on success, or None if the Firebase write failed.
+    """
     msg = {
         "id": _uuid.uuid4().hex,
         "sender": sender,
         "text": text,
         "timestamp": datetime.now().isoformat(),
     }
-    _firebase_put(f"sessions/{session_id}/chat/{msg['id']}", msg)
-    return msg["id"]
+    ok = _firebase_put(f"sessions/{session_id}/chat/{msg['id']}", msg)
+    return msg["id"] if ok else None
 
 
 def cleanup_stale_sessions(max_age_hours=24):
@@ -1774,9 +2858,10 @@ class SessionDetailView(QWidget):
             self.add_result("output", "Available Commands", "\n".join(sorted(self.COMMAND_MAP.keys())) + "\n.help")
             return
 
-        # Map command to orb state for visual feedback
-        cmd_lower = text.lower()
-        orb_state = self.COMMAND_MAP.get(cmd_lower, "command")
+        # Map command to orb state for visual feedback (use just the command word,
+        # so commands with arguments like ".scan C:\\path" still map correctly).
+        cmd_word = text.split(None, 1)[0].lower()
+        orb_state = self.COMMAND_MAP.get(cmd_word, "command")
         self.quick_action.emit(self._session.id, orb_state)
 
         # Send the raw .rift command to the portal so it can interpret it
@@ -2966,12 +4051,21 @@ class RiftAdminConsole(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(1100, 700)
+        self.setMinimumSize(720, 480)
+        # Track mouse across the whole window so we can show resize cursors on the edges
+        self.setMouseTracking(True)
 
         self._start_time = time.time()
         self._drag_pos = None
         self._sessions = []
         self._current_session = None
         self._new_session_dialog = None
+        # Frameless-window resizing state
+        self._resize_margin = 7
+        self._resize_edge = None
+        self._resize_start_geo = None
+        self._resize_start_mouse = None
+        self._normal_geometry = None  # remembered geometry for restore-from-maximized
 
         # ---- Main layout ----
         # The main content (black glass) fills the entire window. The sidebar is
@@ -3021,6 +4115,16 @@ class RiftAdminConsole(QWidget):
         min_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         min_btn.clicked.connect(self.showMinimized)
         title_layout.addWidget(min_btn)
+
+        self._max_btn = QPushButton("□")
+        self._max_btn.setFixedSize(24, 24)
+        self._max_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 11px; border: none; }
+            QPushButton:hover { background: #2a2a45; color: #f0f0f5; }
+        """)
+        self._max_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._max_btn.clicked.connect(self._toggle_max_restore)
+        title_layout.addWidget(self._max_btn)
 
         close_btn = QPushButton("x")
         close_btn.setFixedSize(24, 24)
@@ -3082,7 +4186,11 @@ class RiftAdminConsole(QWidget):
         orb_layout.setSpacing(0)
         self.orb = OrbWidget(orb_area)
         self.orb.setFixedSize(160, 160)
-        self.orb.set_state("idle")  # admin orb starts in idle, not awaiting
+        # Start dormant — a black portal with a tiny needle point. It expands into
+        # an active portal once a client connection is established (see _on_portal_opened
+        # and _on_sessions_updated).
+        self.orb.set_state("awaiting")
+        self._orb_connected = False
         self.orb.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         orb_layout.addWidget(self.orb, alignment=Qt.AlignmentFlag.AlignCenter)
         self._sidebar_layout.addWidget(orb_area, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -3200,6 +4308,11 @@ class RiftAdminConsole(QWidget):
         self._sessions = new_sessions
         self._session_list.set_sessions(self._sessions)
 
+        # Sidebar orb reflects overall connectivity: active if any session is
+        # connected, dormant (awaiting) otherwise.
+        any_connected = any(s.portal_connected for s in new_sessions)
+        self._set_orb_connected(any_connected)
+
         # If the current session's portal_connected state changed, refresh the detail view
         if self._current_session:
             for s in new_sessions:
@@ -3223,31 +4336,46 @@ class RiftAdminConsole(QWidget):
             if s.id == session_id:
                 cmd_type = result.get("type", "output")
                 ok = result.get("ok", True)
-                result_text = result.get("result", "")
+                result_payload = result.get("result", "")
+                is_current = bool(self._current_session and self._current_session.id == session_id)
 
-                # Handle screenshots specially
-                if cmd_type == "screenshot" and "image" in result:
-                    b64_data = result["image"]
+                # A screenshot arrives as a dict payload {"image": <base64 png>}.
+                # It can come back typed either "screenshot" (quick action) or
+                # "rift_command" (.screenshot), so detect it by the payload shape.
+                if isinstance(result_payload, dict) and "image" in result_payload:
+                    b64_data = result_payload["image"]
                     try:
                         png_bytes = _b64.b64decode(b64_data)
                         pm = QPixmap()
                         pm.loadFromData(png_bytes, "PNG")
-                        if self._current_session and self._current_session.id == session_id:
+                        if is_current:
                             self._session_detail.add_screenshot(pm, f"Screenshot - {datetime.now().strftime('%H:%M:%S')}")
                         s.results.append({"type": "screenshot", "title": "Screenshot", "content": "Received"})
                     except Exception as e:
-                        if self._current_session and self._current_session.id == session_id:
+                        if is_current:
                             self._session_detail.add_result("error", "Screenshot decode failed", str(e))
                 else:
+                    # Non-image payloads: render dicts/lists as readable text
+                    if isinstance(result_payload, (dict, list)):
+                        try:
+                            result_text = json.dumps(result_payload, indent=2)[:8000]
+                        except Exception:
+                            result_text = str(result_payload)
+                    else:
+                        result_text = str(result_payload)
                     title = f"Result: {cmd_type}" + ("" if ok else " (FAILED)")
-                    if self._current_session and self._current_session.id == session_id:
+                    if is_current:
                         self._session_detail.add_result("output" if ok else "error", title, result_text)
                     s.results.append({"type": "output", "title": title, "content": result_text})
                 break
 
     def _on_chat_sent(self, session_id, text):
         """Send a chat message to the portal via Firebase."""
-        send_chat_to_session(session_id, text, sender="admin")
+        if send_chat_to_session(session_id, text, sender="admin") is None:
+            # Surface delivery failure so it isn't silently swallowed
+            if self._current_session and self._current_session.id == session_id:
+                self._session_detail._add_chat_bubble(
+                    "⚠ Message failed to send (Firebase unreachable)", is_admin=False)
 
     def _switch_view(self, index):
         self._stack.setCurrentIndex(index)
@@ -3501,9 +4629,24 @@ class RiftAdminConsole(QWidget):
         self._firebase_worker.watch_results(session_id)
         if self._current_session and self._current_session.id == session_id:
             self._session_detail._on_portal_opened()
-        # Set orb to idle (not awaiting) — the portal is now connected
-        self.orb.set_state("idle")
+        # Portal is now connected — grow the dormant needle point into an active portal
+        self._set_orb_connected(True)
         self._update_orb_state("idle")
+
+    def _set_orb_connected(self, connected):
+        """Drive the sidebar orb between dormant (awaiting) and active states.
+
+        On the first connection we play the needle→expand opening animation;
+        when the last connection drops we fall back to the dormant black portal.
+        """
+        if connected:
+            if not self._orb_connected:
+                self._orb_connected = True
+                self.orb.start_portal_opening()
+        else:
+            if self._orb_connected:
+                self._orb_connected = False
+                self.orb.set_state("awaiting")
 
     def _on_chat_received(self, session_id, msg):
         """Incoming chat message from the portal client."""
@@ -3546,19 +4689,111 @@ class RiftAdminConsole(QWidget):
             margin = 12
             self._sidebar.setGeometry(margin, margin, self._sidebar.width(), self.height() - 2 * margin)
 
-    # ---- Window dragging ----
+    # ---- Maximize / restore ----
+    def _toggle_max_restore(self):
+        if self.isMaximized():
+            self.showNormal()
+            self._max_btn.setText("□")
+        else:
+            # Remember the current geometry so a manual resize afterward feels natural
+            self._normal_geometry = self.geometry()
+            self.showMaximized()
+            self._max_btn.setText("❐")
+
+    def changeEvent(self, event):
+        # Keep the maximize/restore glyph in sync with the actual window state
+        if event.type() == QEvent.Type.WindowStateChange and hasattr(self, "_max_btn"):
+            self._max_btn.setText("❐" if self.isMaximized() else "□")
+        super().changeEvent(event)
+
+    # ---- Frameless window dragging + edge resizing ----
+    def _edge_at(self, pos):
+        """Return a set of edges ('left'/'right'/'top'/'bottom') near the given local pos."""
+        m = self._resize_margin
+        edges = set()
+        if pos.x() <= m:
+            edges.add("left")
+        elif pos.x() >= self.width() - m:
+            edges.add("right")
+        if pos.y() <= m:
+            edges.add("top")
+        elif pos.y() >= self.height() - m:
+            edges.add("bottom")
+        return edges
+
+    def _cursor_for_edges(self, edges):
+        if ("left" in edges and "top" in edges) or ("right" in edges and "bottom" in edges):
+            return Qt.CursorShape.SizeFDiagCursor
+        if ("right" in edges and "top" in edges) or ("left" in edges and "bottom" in edges):
+            return Qt.CursorShape.SizeBDiagCursor
+        if "left" in edges or "right" in edges:
+            return Qt.CursorShape.SizeHorCursor
+        if "top" in edges or "bottom" in edges:
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            edges = self._edge_at(event.position().toPoint())
+            if edges and not self.isMaximized():
+                self._resize_edge = edges
+                self._resize_start_geo = self.geometry()
+                self._resize_start_mouse = event.globalPosition().toPoint()
+            else:
+                self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos is not None:
+        # Resizing takes priority when an edge grab is active
+        if self._resize_edge and (event.buttons() & Qt.MouseButton.LeftButton):
+            self._perform_resize(event.globalPosition().toPoint())
+            event.accept()
+            return
+        if (event.buttons() & Qt.MouseButton.LeftButton) and self._drag_pos is not None:
+            if self.isMaximized():
+                # Dragging a maximized window restores it first
+                self._toggle_max_restore()
+                self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
+            return
+        # No button held — update the cursor to hint at resizable edges
+        if not self.isMaximized():
+            self.setCursor(self._cursor_for_edges(self._edge_at(event.position().toPoint())))
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _perform_resize(self, global_pos):
+        delta = global_pos - self._resize_start_mouse
+        geo = self._resize_start_geo
+        x, y, w, h = geo.x(), geo.y(), geo.width(), geo.height()
+        min_w = self.minimumWidth()
+        min_h = self.minimumHeight()
+        if "left" in self._resize_edge:
+            new_w = max(min_w, w - delta.x())
+            x = x + (w - new_w)
+            w = new_w
+        elif "right" in self._resize_edge:
+            w = max(min_w, w + delta.x())
+        if "top" in self._resize_edge:
+            new_h = max(min_h, h - delta.y())
+            y = y + (h - new_h)
+            h = new_h
+        elif "bottom" in self._resize_edge:
+            h = max(min_h, h + delta.y())
+        self.setGeometry(x, y, w, h)
 
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
+        self._resize_edge = None
+        self._resize_start_geo = None
+        self._resize_start_mouse = None
+
+    def mouseDoubleClickEvent(self, event):
+        # Double-click the title area toggles maximize (standard window behavior)
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 48:
+            self._toggle_max_restore()
+            event.accept()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:

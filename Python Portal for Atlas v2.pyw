@@ -35,7 +35,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QPointF, QSize,
-    Property, Signal, QThread, QObject, QElapsedTimer
+    Property, Signal, QThread, QObject, QElapsedTimer, QByteArray, QBuffer, QIODevice
 )
 from PySide6.QtGui import (
     QPainter, QColor, QRadialGradient, QLinearGradient, QFont,
@@ -786,16 +786,6 @@ class CircularGlassFrame(QFrame):
             painter.setBrush(QBrush(grad))
             painter.drawPath(blob)
 
-        # Faintest wispy edge energy — not a stroke, just a soft glow
-        edge_phase = self._phase * 0.5
-        edge = self._blob_path(cx, cy, radius * 0.94, edge_phase, intensity=0.06)
-        for w_mult, alpha in [(8, 8), (5, 14), (3, 20)]:
-            pen = QPen(QColor(80, 40, 100, int(alpha * self._border_alpha / 35)))
-            pen.setWidthF(w_mult)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(edge)
-
         painter.end()
 
 
@@ -1369,62 +1359,6 @@ class OrbWidget(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(blob)
 
-        # ---- 4b. Dark matter branches — black tendrils extending outward from the edge ----
-        # These point at an angle opposite to the spin direction, giving a slow vortex vibe.
-        # Same dark material as the intestines, just reaching outward.
-        # Skip in awaiting state (no portal yet)
-        if self._state != "awaiting":
-            num_branches = 7
-            # Field rotates CCW (field_phase decreases), so branches point CW (trailing)
-            branch_base_angle = -self._field_phase * 0.5  # slow, opposite to field spin
-            for i in range(num_branches):
-                # Each branch at a different angle around the circle
-                angle = branch_base_angle + (i / num_branches) * 2 * math.pi
-                # Branch starts at the edge and extends outward
-                start_r = base_r * 0.95
-                end_r = base_r * (1.15 + 0.08 * math.sin(self._morph_phase * 0.4 + i * 1.3))
-                # Wavy length — branches grow and shrink slowly
-                # Each branch is a wavy tendril, not a straight line
-                # Build a path with several segments that curve slightly
-                branch_path = QPainterPath()
-                num_segs = 8
-                prev_x = prev_y = None
-                for s in range(num_segs + 1):
-                    t = s / num_segs  # 0..1 along the branch
-                    r = start_r + (end_r - start_r) * t
-                    # Curve the branch — slight angular drift as it extends outward
-                    # The drift direction is opposite to the spin (CW since field is CCW)
-                    drift = math.sin(t * 2.5 + self._morph_phase * 0.3 + i * 0.7) * 0.15 * t
-                    a = angle + drift
-                    # Add some perpendicular waviness for organic feel
-                    perp = math.sin(t * 4 + self._field_phase + i * 1.5) * 0.04 * base_r * t
-                    px = cx + math.cos(a) * r + math.cos(a + math.pi / 2) * perp
-                    py = cy + math.sin(a) * r + math.sin(a + math.pi / 2) * perp
-                    if prev_x is None:
-                        branch_path.moveTo(px, py)
-                    else:
-                        branch_path.quadTo(prev_x, prev_y, (prev_x + px) / 2, (prev_y + py) / 2)
-                    prev_x, prev_y = px, py
-                # Draw the branch — very dark, slightly purple, same material as intestines
-                darkness = 10
-                # Fade alpha based on distance from center — thinner at the tips
-                branch_alpha = int(60 + 40 * math.sin(self._morph_phase * 0.2 + i))
-                # In colored states, branches get a faint tint
-                if tint and self._tint_blend > 0.01:
-                    tr, tg, tb = tint
-                    blend = self._tint_blend * 0.3
-                    br = int(darkness * (1 - blend) + tr * blend)
-                    bg = int(darkness * (1 - blend) + tg * blend)
-                    bb = int((darkness + 6) * (1 - blend) + tb * blend)
-                else:
-                    br, bg, bb = darkness, darkness - 3, darkness + 6
-                pen = QPen(QColor(br, bg, bb, branch_alpha))
-                pen.setWidthF(2.5)
-                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-                painter.setPen(pen)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPath(branch_path)
-
         # ---- 5. Portal opening: needle point grows, pink+blue fading to violet ----
         if self._state == "portal_opening":
             prog = self._portal_opening_progress  # 0..1
@@ -1887,11 +1821,16 @@ class ChatWorker(QObject):
         _portal_log(f"_poll_chat: data={data is not None}")
         if not data:
             return
-        messages = data if isinstance(data, list) else list(data.values())
-        for msg_data in messages:
+        # Iterate preserving the Firebase child key so we can fall back to it
+        # when a message has no explicit "id" field.
+        if isinstance(data, list):
+            items = list(enumerate(data))
+        else:
+            items = list(data.items())
+        for child_key, msg_data in items:
             if not isinstance(msg_data, dict):
                 continue
-            msg_id = msg_data.get("id")
+            msg_id = msg_data.get("id", child_key)
             if msg_id in self._owner._seen_chat_ids:
                 continue
             self._owner._seen_chat_ids.add(msg_id)
@@ -2255,9 +2194,11 @@ class ModernPortalWindow(QWidget):
             msg = f"File dropped: {p.name} ({size} bytes) from {p.parent}"
             _portal_log(f"File dropped: {file_path}")
             # Write to Firebase chat
-            _firebase_put(
-                f"sessions/{SESSION_ID}/chat/{uuid.uuid4().hex}",
+            drop_id = uuid.uuid4().hex
+            ok = _firebase_put(
+                f"sessions/{SESSION_ID}/chat/{drop_id}",
                 {
+                    "id": drop_id,
                     "sender": "portal",
                     "text": msg,
                     "timestamp": datetime.now().isoformat(),
@@ -2267,6 +2208,8 @@ class ModernPortalWindow(QWidget):
                     "file_size": size,
                 },
             )
+            if not ok:
+                _portal_log(f"File drop notify failed to reach Firebase: {file_path}")
             self._set_status(f"File: {p.name}", PALETTE["active"])
             self.orb.flash_alert()
             # If in feedme mode, keep it; otherwise switch to feedme briefly
@@ -2277,7 +2220,16 @@ class ModernPortalWindow(QWidget):
             self._set_status(f"Drop failed: {e}", PALETTE["error"])
 
     def _position_chat(self):
-        self.chat.move(self.x() + self.width() - 10, self.y() + 6)
+        screen = QApplication.primaryScreen().geometry()
+        chat_w = self.chat.width()
+        right_x = self.x() + self.width() - 10
+        left_x = self.x() - chat_w + 10
+        if right_x + chat_w <= screen.right():
+            self.chat.move(right_x, self.y() + 6)
+        elif left_x >= screen.left():
+            self.chat.move(left_x, self.y() + 6)
+        else:
+            self.chat.move(max(screen.left(), screen.right() - chat_w), self.y() + 6)
 
     def _set_status(self, text, color=None):
         self.status_label.setText(text)
@@ -2494,9 +2446,13 @@ class ModernPortalWindow(QWidget):
             try:
                 screen = QApplication.primaryScreen()
                 pixmap = screen.grabWindow(0)
-                buf = io.BytesIO()
+                # QPixmap.save needs a QIODevice, not a Python BytesIO — use a QBuffer.
+                ba = QByteArray()
+                buf = QBuffer(ba)
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
                 pixmap.save(buf, "PNG")
-                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                buf.close()
+                b64 = base64.b64encode(bytes(ba)).decode("utf-8")
                 return True, {"image": b64}
             except Exception as e:
                 return False, f"Screenshot failed: {e}"
@@ -2522,7 +2478,9 @@ class ModernPortalWindow(QWidget):
 
         # ---- .rift commands — interpreted directly by the portal ----
         if cmd_type == "rift_command":
-            rift_cmd = cmd.get("command", "").strip().lower()
+            # Preserve original casing (paths are case-sensitive on some systems);
+            # only the command name itself is lowercased inside _execute_rift_command.
+            rift_cmd = cmd.get("command", "").strip()
             if not rift_cmd:
                 return False, "No .rift command given"
             return self._execute_rift_command(rift_cmd, cmd)
@@ -2530,10 +2488,18 @@ class ModernPortalWindow(QWidget):
         return False, f"Unknown command: {cmd_type}"
 
     def _execute_rift_command(self, rift_cmd, cmd):
-        """Handle .rift commands sent from the admin console."""
-        # .scan — scan the current directory for files
-        if rift_cmd == ".scan":
-            folder = self.portal_folder
+        """Handle .rift commands sent from the admin console.
+
+        rift_cmd is the full command string (e.g. '.scan /some/path').
+        We split it into the command name and an optional argument.
+        """
+        parts = rift_cmd.split(None, 1)
+        cmd_name = parts[0].lower() if parts else ""
+        arg = parts[1].strip() if len(parts) > 1 else cmd.get("path", cmd.get("content", ""))
+
+        # .scan — scan the current directory (or a given path) for files
+        if cmd_name == ".scan":
+            folder = arg or self.portal_folder
             try:
                 files = []
                 for p in Path(folder).rglob("*"):
@@ -2545,8 +2511,8 @@ class ModernPortalWindow(QWidget):
                 return False, f"Scan failed: {e}"
 
         # .view — read a file's contents
-        if rift_cmd == ".view":
-            path = cmd.get("path", cmd.get("content", ""))
+        if cmd_name == ".view":
+            path = arg
             if not path:
                 return False, "Need a file path to view"
             try:
@@ -2556,8 +2522,8 @@ class ModernPortalWindow(QWidget):
                 return False, f"View failed: {e}"
 
         # .delete — delete a file
-        if rift_cmd == ".delete":
-            path = cmd.get("path", cmd.get("content", ""))
+        if cmd_name == ".delete":
+            path = arg
             if not path:
                 return False, "Need a file path to delete"
             try:
@@ -2568,8 +2534,8 @@ class ModernPortalWindow(QWidget):
                 return False, f"Delete failed: {e}"
 
         # .fetch — fetch a single file (return its contents as base64)
-        if rift_cmd == ".fetch":
-            path = cmd.get("path", cmd.get("content", ""))
+        if cmd_name == ".fetch":
+            path = arg
             if not path:
                 return False, "Need a file path to fetch"
             try:
@@ -2580,9 +2546,9 @@ class ModernPortalWindow(QWidget):
                 return False, f"Fetch failed: {e}"
 
         # .fetchall — fetch all files in the portal folder
-        if rift_cmd == ".fetchall":
+        if cmd_name == ".fetchall":
             try:
-                folder = Path(self.portal_folder)
+                folder = Path(arg) if arg else Path(self.portal_folder)
                 results = {}
                 for p in folder.rglob("*"):
                     if p.is_file() and ".git" not in str(p):
@@ -2597,12 +2563,34 @@ class ModernPortalWindow(QWidget):
                 return False, f"FetchAll failed: {e}"
 
         # .reset — return to idle
-        if rift_cmd == ".reset":
+        if cmd_name == ".reset":
             self.orb.set_state("idle")
             return True, "Reset to idle"
 
+        # .screenshot — take a screenshot (delegates to the main screenshot handler)
+        if cmd_name == ".screenshot":
+            return self._execute_command({"type": "screenshot", "id": cmd.get("id", "")})
+
+        # .terminal — run a terminal command
+        if cmd_name == ".terminal":
+            if not arg:
+                return False, "Need a command to run (e.g. .terminal ipconfig)"
+            return self._execute_command({"type": "terminal", "id": cmd.get("id", ""), "command": arg})
+
+        # .pause — pause the portal
+        if cmd_name == ".pause":
+            return self._execute_command({"type": "pause_portal", "id": cmd.get("id", "")})
+
+        # .feed — activate feed-me mode
+        if cmd_name == ".feed":
+            return self._execute_command({"type": "feedme", "id": cmd.get("id", "")})
+
+        # .pulse — test pulse
+        if cmd_name == ".pulse":
+            return self._execute_command({"type": "test_pulse", "id": cmd.get("id", "")})
+
         # Unknown .rift command
-        return False, f"Unknown .rift command: {rift_cmd}"
+        return False, f"Unknown .rift command: {cmd_name}"
 
     def _stream_script(self, proc, cmd_id):
         try:
