@@ -362,16 +362,6 @@ class CircularGlassFrame(QFrame):
             painter.setBrush(QBrush(grad))
             painter.drawPath(blob)
 
-        # Faintest wispy edge energy — not a stroke, just a soft glow
-        edge_phase = self._phase * 0.5
-        edge = self._blob_path(cx, cy, radius * 0.94, edge_phase, intensity=0.06)
-        for w_mult, alpha in [(8, 8), (5, 14), (3, 20)]:
-            pen = QPen(QColor(80, 40, 100, int(alpha * self._border_alpha / 35)))
-            pen.setWidthF(w_mult)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(edge)
-
         painter.end()
 
 # ------------------------------------------------------------------

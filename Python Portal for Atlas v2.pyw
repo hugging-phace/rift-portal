@@ -35,7 +35,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QPointF, QSize,
-    Property, Signal, QThread, QObject, QElapsedTimer
+    Property, Signal, QThread, QObject, QElapsedTimer, QByteArray, QBuffer, QIODevice
 )
 from PySide6.QtGui import (
     QPainter, QColor, QRadialGradient, QLinearGradient, QFont,
@@ -785,16 +785,6 @@ class CircularGlassFrame(QFrame):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(grad))
             painter.drawPath(blob)
-
-        # Faintest wispy edge energy — not a stroke, just a soft glow
-        edge_phase = self._phase * 0.5
-        edge = self._blob_path(cx, cy, radius * 0.94, edge_phase, intensity=0.06)
-        for w_mult, alpha in [(8, 8), (5, 14), (3, 20)]:
-            pen = QPen(QColor(80, 40, 100, int(alpha * self._border_alpha / 35)))
-            pen.setWidthF(w_mult)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(edge)
 
         painter.end()
 
@@ -2456,9 +2446,13 @@ class ModernPortalWindow(QWidget):
             try:
                 screen = QApplication.primaryScreen()
                 pixmap = screen.grabWindow(0)
-                buf = io.BytesIO()
+                # QPixmap.save needs a QIODevice, not a Python BytesIO — use a QBuffer.
+                ba = QByteArray()
+                buf = QBuffer(ba)
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
                 pixmap.save(buf, "PNG")
-                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                buf.close()
+                b64 = base64.b64encode(bytes(ba)).decode("utf-8")
                 return True, {"image": b64}
             except Exception as e:
                 return False, f"Screenshot failed: {e}"
