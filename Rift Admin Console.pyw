@@ -2178,6 +2178,45 @@ class ImagePopoutDialog(QDialog):
         self.resize(w, h)
 
 
+def download_session_zip(session, parent=None):
+    """Collect files/screenshots from a session and prompt to save a zip."""
+    try:
+        files = []  # list of (filename, bytes)
+        screenshot_idx = 0
+        for r in session.results:
+            if r["type"] in ("file", "file_drop"):
+                payload = r.get("content", {})
+                if isinstance(payload, dict):
+                    path = payload.get("file", "")
+                    data = payload.get("data", "")
+                    if data:
+                        name = Path(path).name or f"file_{len(files) + 1}"
+                        files.append((name, _b64.b64decode(data)))
+            elif r["type"] == "files":
+                payload = r.get("content", {})
+                if isinstance(payload, dict):
+                    for rel, b64_data in payload.get("files", {}).items():
+                        if b64_data:
+                            files.append((rel, _b64.b64decode(b64_data)))
+            elif r["type"] == "screenshot" and isinstance(r.get("content"), str) and r["content"] != "Received":
+                screenshot_idx += 1
+                files.append((f"screenshot_{screenshot_idx}.png", _b64.b64decode(r["content"])))
+
+        if not files:
+            return
+
+        default_name = f"rift_{session.id}_files.zip"
+        path, _ = QFileDialog.getSaveFileName(parent, "Save Zip", default_name, "Zip files (*.zip)")
+        if not path:
+            return
+
+        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for name, data in files:
+                zf.writestr(name, data)
+    except Exception:
+        pass
+
+
 class ZipDownloadBox(BlackGlassPanel):
     """Alert box shown when a session is closed, offering a zip of all shared files/screenshots."""
 
@@ -2214,45 +2253,11 @@ class ZipDownloadBox(BlackGlassPanel):
             }}
             QPushButton:hover {{ background: rgba(220, 60, 60, 45); }}
         """)
-        download_btn.clicked.connect(self._download_zip)
+        download_btn.clicked.connect(lambda: download_session_zip(self._session, self))
         layout.addWidget(download_btn)
 
     def _download_zip(self):
-        try:
-            files = []  # list of (filename, bytes)
-            screenshot_idx = 0
-            for r in self._session.results:
-                if r["type"] in ("file", "file_drop"):
-                    payload = r.get("content", {})
-                    if isinstance(payload, dict):
-                        path = payload.get("file", "")
-                        data = payload.get("data", "")
-                        if data:
-                            name = Path(path).name or f"file_{len(files) + 1}"
-                            files.append((name, _b64.b64decode(data)))
-                elif r["type"] == "files":
-                    payload = r.get("content", {})
-                    if isinstance(payload, dict):
-                        for rel, b64_data in payload.get("files", {}).items():
-                            if b64_data:
-                                files.append((rel, _b64.b64decode(b64_data)))
-                elif r["type"] == "screenshot" and isinstance(r.get("content"), str) and r["content"] != "Received":
-                    screenshot_idx += 1
-                    files.append((f"screenshot_{screenshot_idx}.png", _b64.b64decode(r["content"])))
-
-            if not files:
-                return
-
-            default_name = f"rift_{self._session.id}_files.zip"
-            path, _ = QFileDialog.getSaveFileName(self, "Save Zip", default_name, "Zip files (*.zip)")
-            if not path:
-                return
-
-            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for name, data in files:
-                    zf.writestr(name, data)
-        except Exception:
-            pass
+        download_session_zip(self._session, self)
 
 
 class RiftConfirmDialog(QDialog):
@@ -2598,6 +2603,7 @@ class SessionCard(QFrame):
 
         info_row = QWidget(self)
         info_row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        info_row.setFixedHeight(64)
         info_layout = QHBoxLayout(info_row)
         info_layout.setContentsMargins(14, 8, 14, 8)
         info_layout.setSpacing(12)
@@ -2685,16 +2691,55 @@ class SessionCard(QFrame):
         is_closed = session.status in ("user-closed", "closed")
         if is_closed:
             if self._zip_alert is None:
-                self._zip_alert = ZipDownloadBox(session, self)
+                self._zip_alert = QFrame(self)
+                self._zip_alert.setAutoFillBackground(True)
+                self._zip_alert.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+                self._zip_alert.setStyleSheet("background-color: rgba(120, 40, 40, 180); border: 1px solid rgba(220, 80, 80, 120); border-radius: 6px;")
+                zl = QVBoxLayout(self._zip_alert)
+                zl.setContentsMargins(8, 6, 8, 6)
+                zl.setSpacing(4)
+                zh = QLabel("User closed this Rift")
+                zh.setStyleSheet(f"color: {PALETTE['error']}; background: transparent; font-weight: bold;")
+                zh.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+                zh.setWordWrap(True)
+                zm = QLabel("Save important documents before the session is purged.")
+                zm.setStyleSheet(f"color: {PALETTE['text']}; background: transparent;")
+                zm.setFont(QFont(ADMIN_MONO, 7))
+                zm.setWordWrap(True)
+                self._zip_alert._download_btn = QPushButton("Download Zip")
+                self._zip_alert._download_btn.setFixedHeight(30)
+                self._zip_alert._download_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+                self._zip_alert._download_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                self._zip_alert._download_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: rgba(220, 60, 60, 25);
+                        color: {PALETTE['error']};
+                        border: 1px solid rgba(220, 60, 60, 60);
+                        border-radius: 4px;
+                        padding: 0 14px;
+                    }}
+                    QPushButton:hover {{ background: rgba(220, 60, 60, 45); }}
+                """)
+                self._zip_alert._download_btn.clicked.connect(self._download_zip)
+                zl.addWidget(zh)
+                zl.addWidget(zm)
+                zl.addWidget(self._zip_alert._download_btn)
                 self.layout().addWidget(self._zip_alert)
-            else:
-                self._zip_alert._session = session
             self._zip_alert.setVisible(True)
+            self._zip_alert.setFixedHeight(116)
             self.setFixedHeight(180)
+            self._border_color = (220, 60, 60, 80)
+            self._glow_color = (255, 80, 80)
+            self.layout().activate()
+            self._zip_alert.update()
+            self.update()
         else:
             if self._zip_alert is not None:
                 self._zip_alert.setVisible(False)
             self.setFixedHeight(64)
+            # Reset border/glow to default inactive colors
+            self._border_color = (60, 60, 80, 30)
+            self._glow_color = (90, 90, 110)
 
         # Start/stop animation based on state
         if card_state == "waiting" and not self._anim_timer.isActive():
@@ -2709,6 +2754,10 @@ class SessionCard(QFrame):
         self._apply_session(session)
         if old_state != self._card_state:
             self.update()
+
+    def _download_zip(self):
+        """Download a zip of all shared files/screenshots for this session."""
+        download_session_zip(self._session, self)
 
     def _anim_tick(self):
         self._anim_phase += 0.0025  # slow travel
@@ -2932,7 +2981,7 @@ class SessionListView(QWidget):
         self._active_layout.setSpacing(8)
         self._active_layout.addStretch()
         self._active_scroll.setWidget(self._active_container)
-        layout.addWidget(self._active_scroll, 1)
+        layout.addWidget(self._active_scroll, 2)
 
         # Fallback click detector on the scroll viewport — catches clicks that
         # the card itself may miss due to refresh/reparent timing.
@@ -2953,11 +3002,12 @@ class SessionListView(QWidget):
             QPushButton:hover {{ color: {PALETTE['text']}; }}
         """)
         self._inactive_toggle.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._inactive_collapsed = False
+        self._inactive_collapsed = True
         self._inactive_toggle.clicked.connect(self._toggle_inactive)
         layout.addWidget(self._inactive_toggle)
 
         self._inactive_scroll = QScrollArea()
+        self._inactive_scroll.setMinimumHeight(200)
         self._inactive_scroll.setWidgetResizable(True)
         self._inactive_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self._inactive_container = QWidget()
@@ -2967,8 +3017,8 @@ class SessionListView(QWidget):
         self._inactive_layout.setSpacing(8)
         self._inactive_layout.addStretch()
         self._inactive_scroll.setWidget(self._inactive_container)
-        self._inactive_scroll.setVisible(False)
-        layout.addWidget(self._inactive_scroll, 0)
+        self._inactive_scroll.setVisible(True)
+        layout.addWidget(self._inactive_scroll, 1)
 
         # Fallback click detector for inactive list too
         self._inactive_scroll.viewport().installEventFilter(self)
@@ -2986,13 +3036,21 @@ class SessionListView(QWidget):
         self._inactive_toggle.setText(f"{prefix}  INACTIVE / EXPIRED")
 
     def eventFilter(self, watched, event):
-        """Fallback: route clicks on the scroll viewport to the card beneath."""
+        """Fallback: route clicks on the scroll viewport to the card beneath.
+
+        Clicks on interactive children (buttons) are left alone so their own
+        signals fire. Clicks on the card itself or non-interactive children
+        open the session detail view.
+        """
         if event.type() == QEvent.Type.MouseButtonPress:
             mouse_event = event
             if mouse_event.button() == Qt.MouseButton.LeftButton:
                 viewport = watched
                 pos = viewport.mapTo(self._active_container if viewport == self._active_scroll.viewport() else self._inactive_container, mouse_event.pos())
                 target = self._active_container.childAt(pos) if viewport == self._active_scroll.viewport() else self._inactive_container.childAt(pos)
+                # Let buttons and other interactive children handle their own clicks.
+                if isinstance(target, QPushButton):
+                    return False
                 card = None
                 w = target
                 while w is not None:
@@ -3012,6 +3070,9 @@ class SessionListView(QWidget):
     def _refresh(self):
         active = [s for s in self._sessions if s.status == "active"]
         inactive = [s for s in self._sessions if s.status != "active"]
+        # Show user-closed sessions at the top of the inactive list so the close alert
+        # and zip-download button are immediately visible without scrolling.
+        inactive = sorted(inactive, key=lambda s: (0 if s.status in ("user-closed", "closed") else 1, s.last_seen or ""))
 
         self.stat_active.set_value(str(len(active)), PALETTE["success"])
         self.stat_total.set_value(str(len(self._sessions)))
