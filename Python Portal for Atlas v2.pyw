@@ -1006,20 +1006,29 @@ class OrbWidget(QWidget):
             fast_ease = 1.0 - math.exp(-dt * 15.0)
             self._pulse_breath = self._lerp(self._pulse_breath, 1.0, fast_ease)
 
-        # Vision mode: occasional blink and smooth eyelid movement
+        # Vision mode: slow, occasional left-to-right blink of the black pupil/rift
         if self._state == "vision":
             self._vision_blink += dt
-            # Blink every ~2.5 to 4.5 seconds
-            if self._vision_blink > 3.5 + math.sin(self._breath_phase * 0.5) * 0.5:
+            # Cycle: wait ~6 s, close slowly (~1.5 s), hold briefly, open slowly (~1.5 s)
+            VISION_OPEN_HOLD = 6.0
+            VISION_CLOSE_TIME = 1.5
+            VISION_CLOSED_TIME = 0.2
+            VISION_OPEN_TIME = 1.5
+            vision_blink_total = VISION_OPEN_HOLD + VISION_CLOSE_TIME + VISION_CLOSED_TIME + VISION_OPEN_TIME
+            if self._vision_blink > vision_blink_total:
                 self._vision_blink = 0.0
-            # Eyelid opens quickly, closes quickly for the blink, then reopens
-            if self._vision_blink < 0.15:
+            t = self._vision_blink
+            if t < VISION_OPEN_HOLD:
                 target_open = 1.0
-            elif self._vision_blink < 0.35:
-                target_open = 0.15
+            elif t < VISION_OPEN_HOLD + VISION_CLOSE_TIME:
+                k = (t - VISION_OPEN_HOLD) / VISION_CLOSE_TIME
+                target_open = 1.0 - k
+            elif t < VISION_OPEN_HOLD + VISION_CLOSE_TIME + VISION_CLOSED_TIME:
+                target_open = 0.0
             else:
-                target_open = 1.0
-            self._vision_open = self._lerp(self._vision_open, target_open, 1.0 - math.exp(-dt * 20.0))
+                k = (t - (VISION_OPEN_HOLD + VISION_CLOSE_TIME + VISION_CLOSED_TIME)) / VISION_OPEN_TIME
+                target_open = k
+            self._vision_open = self._lerp(self._vision_open, target_open, 1.0 - math.exp(-dt * 4.0))
         else:
             self._vision_open = self._lerp(self._vision_open, 1.0, 1.0 - math.exp(-dt * 10.0))
 
@@ -1290,6 +1299,23 @@ class OrbWidget(QWidget):
             p2 = pts[(i + 1) % detail]
             m = mid(p1, p2)
             path.quadTo(*p1, *m)
+        return path
+
+    def _vesica_path(self, a, b):
+        """Vertical lens (vesica piscis) path for the Vision eye/pupil.
+
+        a is the half-width at the equator, b is the half-height at the
+        poles. The result is pointed at top and bottom and curved at the sides.
+        """
+        c = (b * b - a * a) / (2 * a)
+        r = (a * a + b * b) / (2 * a)
+        phi = math.degrees(math.atan2(b, c))
+        path = QPainterPath()
+        path.moveTo(0, -b)
+        # Right side arc of the left circle
+        path.arcTo(-c - r, -r, 2 * r, 2 * r, -phi, 2 * phi)
+        # Left side arc of the right circle
+        path.arcTo(c - r, -r, 2 * r, 2 * r, 180 - phi, 2 * phi)
         return path
 
     def paintEvent(self, event):
@@ -1679,19 +1705,19 @@ class OrbWidget(QWidget):
                 painter.setPen(pen2)
                 painter.drawEllipse(QPointF(r["x"], r["y"]), ripple_r * 1.3, ripple_r * 1.3)
 
-        # ---- Vision mode: vertical cat/dragon eye that follows the mouse ----
+        # ---- Vision mode: sharp vertical rift-eye that follows the mouse ----
         if self._state == "vision":
             eye_col = tint if tint else (220, 80, 180)
             er, eg, eb = eye_col
-            # Eye dimensions: vertical almond, larger in the centre
-            a = base_r * 0.55
-            b = base_r * 0.80
-            eye_path = QPainterPath()
-            eye_path.moveTo(-a, 0)
-            eye_path.cubicTo(-a, -b * 1.2, -a * 0.2, -b, 0, -b)
-            eye_path.cubicTo(a * 0.2, -b, a, -b * 1.2, a, 0)
-            eye_path.cubicTo(a, b * 1.2, a * 0.2, b, 0, b)
-            eye_path.cubicTo(-a * 0.2, b, -a, b * 1.2, -a, 0)
+            # Outer eye: a pointed vertical lens (vesica piscis)
+            a = base_r * 0.62
+            b = base_r * 0.88
+            eye_path = self._vesica_path(a, b)
+
+            # Black pupil/rift: taller, sharper, slightly wider
+            pa = base_r * 0.14
+            pb = base_r * 0.42
+            pupil_path = self._vesica_path(pa, pb)
 
             # The pupil/iris follows the mouse via the lean values
             pupil_x = self._lean_x * base_r * 4.0
@@ -1699,8 +1725,6 @@ class OrbWidget(QWidget):
 
             painter.save()
             painter.translate(cx, cy)
-            # Blink scales the whole eye vertically
-            painter.scale(1.0, max(0.12, self._vision_open))
 
             # Sclera glow
             sclera_grad = QRadialGradient(0, 0, b)
@@ -1711,25 +1735,22 @@ class OrbWidget(QWidget):
             painter.setBrush(QBrush(sclera_grad))
             painter.drawPath(eye_path)
 
-            # Iris
-            iris_r = base_r * 0.32
-            iris_grad = QRadialGradient(pupil_x, pupil_y, iris_r)
+            # Move to pupil position for iris and pupil
+            painter.translate(pupil_x, pupil_y)
+
+            # Iris (colored glow around the black rift)
+            iris_r = base_r * 0.48
+            iris_grad = QRadialGradient(0, 0, iris_r)
             iris_grad.setColorAt(0, QColor(min(255, er + 35), min(255, eg + 35), min(255, eb + 35), 160))
             iris_grad.setColorAt(0.6, QColor(er, eg, eb, 100))
             iris_grad.setColorAt(1, QColor(0, 0, 0, 0))
             painter.setBrush(QBrush(iris_grad))
-            painter.drawEllipse(QPointF(pupil_x, pupil_y), iris_r, iris_r)
+            painter.drawEllipse(QPointF(0, 0), iris_r, iris_r)
 
-            # Pupil (vertical slit)
-            painter.setBrush(QBrush(QColor(10, 5, 15, 230)))
-            painter.drawEllipse(QPointF(pupil_x, pupil_y), base_r * 0.12, base_r * 0.35)
-
-            # Eye outline (soft purple-pink stroke)
-            outline_pen = QPen(QColor(er, eg, eb, 90))
-            outline_pen.setWidthF(2.0)
-            painter.setPen(outline_pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(eye_path)
+            # Black pupil/rift: slowly closes left-to-right
+            painter.scale(max(0.02, self._vision_open), 1.0)
+            painter.setBrush(QBrush(QColor(8, 4, 12, 245)))
+            painter.drawPath(pupil_path)
 
             painter.restore()
 
