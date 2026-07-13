@@ -2577,6 +2577,7 @@ class SessionCard(QFrame):
         self._radius = 10
         self._border_color = (*border_color, 30)
         self._session_id = session.id
+        self._session = session
         self._card_state = card_state
         self._glow_color = glow_color
         self._border_color_rgb = border_color
@@ -2591,38 +2592,48 @@ class SessionCard(QFrame):
         if card_state == "waiting":
             self._anim_timer.start(16)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 8, 14, 8)
-        layout.setSpacing(12)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        info_row = QWidget(self)
+        info_row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        info_layout = QHBoxLayout(info_row)
+        info_layout.setContentsMargins(14, 8, 14, 8)
+        info_layout.setSpacing(12)
 
         self._dot = QLabel()
         self._dot.setFixedSize(10, 10)
         self._dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self._dot)
+        info_layout.addWidget(self._dot)
 
         # Name + host info
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
+        name_host_layout = QVBoxLayout()
+        name_host_layout.setSpacing(2)
 
         self._name_label = QLabel()
         self._name_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
         self._name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
         self._name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        info_layout.addWidget(self._name_label)
+        name_host_layout.addWidget(self._name_label)
 
         self._host_label = QLabel()
         self._host_label.setFont(QFont(ADMIN_MONO, 7))
         self._host_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
         self._host_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        info_layout.addWidget(self._host_label)
+        name_host_layout.addWidget(self._host_label)
 
-        layout.addLayout(info_layout, 1)
+        info_layout.addLayout(name_host_layout, 1)
 
         self._state_label = QLabel()
         self._state_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
         self._state_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
         self._state_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self._state_label)
+        info_layout.addWidget(self._state_label)
+
+        main_layout.addWidget(info_row)
+
+        self._zip_alert = None
 
         self._apply_session(session)
 
@@ -2632,6 +2643,7 @@ class SessionCard(QFrame):
         border_color, glow_color = self.STATE_COLORS.get(card_state, self.STATE_COLORS["inactive"])
 
         self._session_id = session.id
+        self._session = session
         self._card_state = card_state
         self._glow_color = glow_color
         self._border_color_rgb = border_color
@@ -2668,6 +2680,21 @@ class SessionCard(QFrame):
         state_info, state_color = STATE_INFO.get(session.orb_state, ("UNKNOWN", PALETTE["muted"]))
         self._state_label.setText(state_info)
         self._state_label.setStyleSheet(f"color: {state_color}; background: transparent; border: none; letter-spacing: 1px;")
+
+        # If the user has closed this session, show the zip-download alert inline on the card.
+        is_closed = session.status in ("user-closed", "closed")
+        if is_closed:
+            if self._zip_alert is None:
+                self._zip_alert = ZipDownloadBox(session, self)
+                self.layout().addWidget(self._zip_alert)
+            else:
+                self._zip_alert._session = session
+            self._zip_alert.setVisible(True)
+            self.setFixedHeight(180)
+        else:
+            if self._zip_alert is not None:
+                self._zip_alert.setVisible(False)
+            self.setFixedHeight(64)
 
         # Start/stop animation based on state
         if card_state == "waiting" and not self._anim_timer.isActive():

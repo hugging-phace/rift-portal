@@ -3191,11 +3191,11 @@ class ModernPortalWindow(QWidget):
 
         # .scan — scan the current directory (or a given path) for files
         if cmd_name == ".scan":
-            folder = arg or self.portal_folder
+            folder = Path(self.portal_folder) / arg if arg else Path(self.portal_folder)
             try:
                 files = []
-                for p in Path(folder).rglob("*"):
-                    if p.is_file() and not str(p).startswith(str(Path(folder) / ".git")):
+                for p in folder.rglob("*"):
+                    if p.is_file() and not str(p).startswith(str(folder / ".git")):
                         rel = p.relative_to(folder)
                         files.append(f"{rel} ({p.stat().st_size} bytes)")
                 return True, "Files:\n" + "\n".join(files[:200])
@@ -3204,9 +3204,9 @@ class ModernPortalWindow(QWidget):
 
         # .view — read a file's contents
         if cmd_name == ".view":
-            path = arg
-            if not path:
+            if not arg:
                 return False, "Need a file path to view"
+            path = Path(self.portal_folder) / arg
             try:
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
                     return True, f.read()[:4000]
@@ -3215,32 +3215,32 @@ class ModernPortalWindow(QWidget):
 
         # .delete — delete a file
         if cmd_name == ".delete":
-            path = arg
-            if not path:
+            if not arg:
                 return False, "Need a file path to delete"
+            path = Path(self.portal_folder) / arg
             try:
                 _backup_file(path, "delete")
-                Path(path).unlink()
+                path.unlink()
                 return True, f"Deleted {path}"
             except Exception as e:
                 return False, f"Delete failed: {e}"
 
         # .fetch — fetch a single file (return its contents as base64)
         if cmd_name == ".fetch":
-            path = arg
-            if not path:
+            if not arg:
                 return False, "Need a file path to fetch"
+            path = Path(self.portal_folder) / arg
             try:
                 with open(path, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode("utf-8")
-                return True, {"file": path, "data": b64}
+                return True, {"file": str(path), "data": b64}
             except Exception as e:
                 return False, f"Fetch failed: {e}"
 
         # .fetchall — fetch all files in the portal folder
         if cmd_name == ".fetchall":
             try:
-                folder = Path(arg) if arg else Path(self.portal_folder)
+                folder = Path(self.portal_folder) / arg if arg else Path(self.portal_folder)
                 results = {}
                 for p in folder.rglob("*"):
                     if p.is_file() and ".git" not in str(p):
