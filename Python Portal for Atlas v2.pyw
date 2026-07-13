@@ -1735,21 +1735,34 @@ class OrbWidget(QWidget):
             painter.setBrush(QBrush(sclera_grad))
             painter.drawPath(eye_path)
 
+            # Subtle rim light along the outer eye edge
+            rim = QColor(min(255, er + 60), min(255, eg + 60), min(255, eb + 60), 80)
+            rim_pen = QPen(rim)
+            rim_pen.setWidthF(2.0)
+            painter.setPen(rim_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(eye_path)
+
             # Move to pupil position for iris and pupil
             painter.translate(pupil_x, pupil_y)
 
             # Iris (colored glow around the black rift)
-            iris_r = base_r * 0.48
+            iris_r = base_r * 0.36
             iris_grad = QRadialGradient(0, 0, iris_r)
             iris_grad.setColorAt(0, QColor(min(255, er + 35), min(255, eg + 35), min(255, eb + 35), 160))
             iris_grad.setColorAt(0.6, QColor(er, eg, eb, 100))
             iris_grad.setColorAt(1, QColor(0, 0, 0, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(iris_grad))
             painter.drawEllipse(QPointF(0, 0), iris_r, iris_r)
 
-            # Black pupil/rift: slowly closes left-to-right
+            # Black pupil/rift: slowly closes left-to-right with a vertical sheen
             painter.scale(max(0.02, self._vision_open), 1.0)
-            painter.setBrush(QBrush(QColor(8, 4, 12, 245)))
+            pupil_grad = QLinearGradient(0, -pb, 0, pb)
+            pupil_grad.setColorAt(0, QColor(8, 4, 12, 245))
+            pupil_grad.setColorAt(0.5, QColor(40, 15, 45, 210))
+            pupil_grad.setColorAt(1, QColor(8, 4, 12, 245))
+            painter.setBrush(QBrush(pupil_grad))
             painter.drawPath(pupil_path)
 
             painter.restore()

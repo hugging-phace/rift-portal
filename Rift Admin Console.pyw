@@ -2988,7 +2988,7 @@ class SessionListView(QWidget):
         self._active_scroll.viewport().installEventFilter(self)
 
         # Inactive sessions (collapsed)
-        self._inactive_toggle = QPushButton("v  INACTIVE / EXPIRED")
+        self._inactive_toggle = QPushButton(">  INACTIVE / EXPIRED")
         self._inactive_toggle.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
         self._inactive_toggle.setStyleSheet(f"""
             QPushButton {{
@@ -3017,7 +3017,7 @@ class SessionListView(QWidget):
         self._inactive_layout.setSpacing(8)
         self._inactive_layout.addStretch()
         self._inactive_scroll.setWidget(self._inactive_container)
-        self._inactive_scroll.setVisible(True)
+        self._inactive_scroll.setVisible(False)
         layout.addWidget(self._inactive_scroll, 1)
 
         # Fallback click detector for inactive list too
@@ -3031,8 +3031,8 @@ class SessionListView(QWidget):
 
     def _toggle_inactive(self):
         self._inactive_collapsed = not self._inactive_collapsed
-        self._inactive_scroll.setVisible(self._inactive_collapsed)
-        prefix = "v" if self._inactive_collapsed else ">"
+        self._inactive_scroll.setVisible(not self._inactive_collapsed)
+        prefix = ">" if self._inactive_collapsed else "v"
         self._inactive_toggle.setText(f"{prefix}  INACTIVE / EXPIRED")
 
     def eventFilter(self, watched, event):
