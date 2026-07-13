@@ -2455,12 +2455,12 @@ class ModernPortalWindow(QWidget):
             Qt.WindowType.Window
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(260, 360)
+        self.setFixedSize(260, 286)
         self.setAcceptDrops(True)  # Allow file drag-and-drop
 
         # Outer rounded-rect frosted glass container
         self.container = FrostedContainer(self)
-        self.container.setGeometry(8, 8, 244, 344)
+        self.container.setGeometry(8, 8, 244, 270)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         layout = QVBoxLayout(self.container)
@@ -2506,14 +2506,14 @@ class ModernPortalWindow(QWidget):
         # Orb area — circular dark glass backdrop for the portal
         # Sized to match the admin console sidebar orb exactly.
         orb_area = CircularGlassFrame()
-        orb_area.setFixedSize(200, 200)
+        orb_area.setFixedSize(160, 160)
         orb_area.set_border_alpha(22)
         orb_layout = QVBoxLayout(orb_area)
         orb_layout.setContentsMargins(8, 8, 8, 8)
         orb_layout.setSpacing(2)
 
         self.orb = OrbWidget(orb_area)
-        self.orb.setFixedSize(160, 160)
+        self.orb.setFixedSize(140, 140)
         self.orb.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.orb.state_changed.connect(self._on_orb_state_changed)
         self.orb.clicked.connect(self._on_vision_click)
@@ -2525,14 +2525,14 @@ class ModernPortalWindow(QWidget):
         self.status_label = QLabel("Awaiting Rift connection")
         self.status_label.setFont(QFont("Segoe UI", 9))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setWordWrap(True)
-        self.status_label.setFixedWidth(220)
+        self.status_label.setWordWrap(False)
+        self.status_label.setFixedSize(220, 24)
         self.status_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
         layout.addWidget(self.status_label)
 
         # Footer with chat button
         footer = QWidget()
-        footer.setFixedHeight(34)
+        footer.setFixedHeight(30)
         footer.setStyleSheet("background: transparent; border: none;")
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(0, 4, 0, 0)
@@ -2540,13 +2540,13 @@ class ModernPortalWindow(QWidget):
 
         self.chat_btn = QPushButton("Open Chat")
         self.chat_btn.setFont(QFont("Segoe UI", 9))
-        self.chat_btn.setFixedHeight(26)
+        self.chat_btn.setFixedHeight(24)
         self.chat_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {PALETTE['panel_light']};
                 color: {PALETTE['text']};
-                border-radius: 13px;
-                padding: 0 16px;
+                border-radius: 12px;
+                padding: 0 14px;
                 border: 1px solid rgba(255, 255, 255, 30);
             }}
             QPushButton:hover {{ background-color: {PALETTE['accent']}; color: #ffffff; border: 1px solid rgba(255, 255, 255, 50); }}
@@ -2556,13 +2556,13 @@ class ModernPortalWindow(QWidget):
 
         self.reopen_btn = QPushButton("Reopen Rift")
         self.reopen_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        self.reopen_btn.setFixedHeight(26)
+        self.reopen_btn.setFixedHeight(24)
         self.reopen_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(154, 89, 182, 35);
                 color: {PALETTE['accent_bright']};
-                border-radius: 13px;
-                padding: 0 16px;
+                border-radius: 12px;
+                padding: 0 14px;
                 border: 1px solid rgba(154, 89, 182, 60);
             }}
             QPushButton:hover {{ background-color: rgba(154, 89, 182, 55); }}
