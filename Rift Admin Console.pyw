@@ -1295,9 +1295,11 @@ class FirebaseWorker(_QObj):
             status = info.get("status", "unknown")
             opened_at = info.get("opened_at", "")
             last_seen = info.get("last_seen", "")
-            # Treat anything not explicitly "open" as inactive
+            # Treat anything not explicitly "open" as inactive, but keep the
+            # original status (e.g. "user-closed", "closed") so the admin UI can
+            # show the close alert and zip-download option.
             is_open = (status == "open")
-            session_status = "active" if is_open else "inactive"
+            session_status = "active" if is_open else status
             # Determine card state:
             #   stale = open but no heartbeat recently
             #   waiting = open but admin hasn't opened portal yet
@@ -1572,6 +1574,7 @@ STATE_INFO = {
     "test_pulse": ("PULSE",      "#dc1e28"),
     "paused":     ("PAUSED",     "#ffb432"),
     "feedme":     ("FEEDME",     "#28dc64"),
+    "vision":     ("VISION",     "#dc50b4"),
 }
 
 
@@ -2175,6 +2178,45 @@ class ImagePopoutDialog(QDialog):
         self.resize(w, h)
 
 
+def download_session_zip(session, parent=None):
+    """Collect files/screenshots from a session and prompt to save a zip."""
+    try:
+        files = []  # list of (filename, bytes)
+        screenshot_idx = 0
+        for r in session.results:
+            if r["type"] in ("file", "file_drop"):
+                payload = r.get("content", {})
+                if isinstance(payload, dict):
+                    path = payload.get("file", "")
+                    data = payload.get("data", "")
+                    if data:
+                        name = Path(path).name or f"file_{len(files) + 1}"
+                        files.append((name, _b64.b64decode(data)))
+            elif r["type"] == "files":
+                payload = r.get("content", {})
+                if isinstance(payload, dict):
+                    for rel, b64_data in payload.get("files", {}).items():
+                        if b64_data:
+                            files.append((rel, _b64.b64decode(b64_data)))
+            elif r["type"] == "screenshot" and isinstance(r.get("content"), str) and r["content"] != "Received":
+                screenshot_idx += 1
+                files.append((f"screenshot_{screenshot_idx}.png", _b64.b64decode(r["content"])))
+
+        if not files:
+            return
+
+        default_name = f"rift_{session.id}_files.zip"
+        path, _ = QFileDialog.getSaveFileName(parent, "Save Zip", default_name, "Zip files (*.zip)")
+        if not path:
+            return
+
+        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for name, data in files:
+                zf.writestr(name, data)
+    except Exception:
+        pass
+
+
 class ZipDownloadBox(BlackGlassPanel):
     """Alert box shown when a session is closed, offering a zip of all shared files/screenshots."""
 
@@ -2211,45 +2253,11 @@ class ZipDownloadBox(BlackGlassPanel):
             }}
             QPushButton:hover {{ background: rgba(220, 60, 60, 45); }}
         """)
-        download_btn.clicked.connect(self._download_zip)
+        download_btn.clicked.connect(lambda: download_session_zip(self._session, self))
         layout.addWidget(download_btn)
 
     def _download_zip(self):
-        try:
-            files = []  # list of (filename, bytes)
-            screenshot_idx = 0
-            for r in self._session.results:
-                if r["type"] in ("file", "file_drop"):
-                    payload = r.get("content", {})
-                    if isinstance(payload, dict):
-                        path = payload.get("file", "")
-                        data = payload.get("data", "")
-                        if data:
-                            name = Path(path).name or f"file_{len(files) + 1}"
-                            files.append((name, _b64.b64decode(data)))
-                elif r["type"] == "files":
-                    payload = r.get("content", {})
-                    if isinstance(payload, dict):
-                        for rel, b64_data in payload.get("files", {}).items():
-                            if b64_data:
-                                files.append((rel, _b64.b64decode(b64_data)))
-                elif r["type"] == "screenshot" and isinstance(r.get("content"), str) and r["content"] != "Received":
-                    screenshot_idx += 1
-                    files.append((f"screenshot_{screenshot_idx}.png", _b64.b64decode(r["content"])))
-
-            if not files:
-                return
-
-            default_name = f"rift_{self._session.id}_files.zip"
-            path, _ = QFileDialog.getSaveFileName(self, "Save Zip", default_name, "Zip files (*.zip)")
-            if not path:
-                return
-
-            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for name, data in files:
-                    zf.writestr(name, data)
-        except Exception:
-            pass
+        download_session_zip(self._session, self)
 
 
 class RiftConfirmDialog(QDialog):
@@ -2574,6 +2582,7 @@ class SessionCard(QFrame):
         self._radius = 10
         self._border_color = (*border_color, 30)
         self._session_id = session.id
+        self._session = session
         self._card_state = card_state
         self._glow_color = glow_color
         self._border_color_rgb = border_color
@@ -2588,38 +2597,49 @@ class SessionCard(QFrame):
         if card_state == "waiting":
             self._anim_timer.start(16)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 8, 14, 8)
-        layout.setSpacing(12)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        info_row = QWidget(self)
+        info_row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        info_row.setFixedHeight(64)
+        info_layout = QHBoxLayout(info_row)
+        info_layout.setContentsMargins(14, 8, 14, 8)
+        info_layout.setSpacing(12)
 
         self._dot = QLabel()
         self._dot.setFixedSize(10, 10)
         self._dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self._dot)
+        info_layout.addWidget(self._dot)
 
         # Name + host info
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
+        name_host_layout = QVBoxLayout()
+        name_host_layout.setSpacing(2)
 
         self._name_label = QLabel()
         self._name_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
         self._name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
         self._name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        info_layout.addWidget(self._name_label)
+        name_host_layout.addWidget(self._name_label)
 
         self._host_label = QLabel()
         self._host_label.setFont(QFont(ADMIN_MONO, 7))
         self._host_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
         self._host_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        info_layout.addWidget(self._host_label)
+        name_host_layout.addWidget(self._host_label)
 
-        layout.addLayout(info_layout, 1)
+        info_layout.addLayout(name_host_layout, 1)
 
         self._state_label = QLabel()
         self._state_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
         self._state_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
         self._state_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(self._state_label)
+        info_layout.addWidget(self._state_label)
+
+        main_layout.addWidget(info_row)
+
+        self._zip_alert = None
 
         self._apply_session(session)
 
@@ -2629,6 +2649,7 @@ class SessionCard(QFrame):
         border_color, glow_color = self.STATE_COLORS.get(card_state, self.STATE_COLORS["inactive"])
 
         self._session_id = session.id
+        self._session = session
         self._card_state = card_state
         self._glow_color = glow_color
         self._border_color_rgb = border_color
@@ -2666,6 +2687,60 @@ class SessionCard(QFrame):
         self._state_label.setText(state_info)
         self._state_label.setStyleSheet(f"color: {state_color}; background: transparent; border: none; letter-spacing: 1px;")
 
+        # If the user has closed this session, show the zip-download alert inline on the card.
+        is_closed = session.status in ("user-closed", "closed")
+        if is_closed:
+            if self._zip_alert is None:
+                self._zip_alert = QFrame(self)
+                self._zip_alert.setAutoFillBackground(True)
+                self._zip_alert.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+                self._zip_alert.setStyleSheet("background-color: rgba(120, 40, 40, 180); border: 1px solid rgba(220, 80, 80, 120); border-radius: 6px;")
+                zl = QVBoxLayout(self._zip_alert)
+                zl.setContentsMargins(8, 6, 8, 6)
+                zl.setSpacing(4)
+                zh = QLabel("User closed this Rift")
+                zh.setStyleSheet(f"color: {PALETTE['error']}; background: transparent; font-weight: bold;")
+                zh.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+                zh.setWordWrap(True)
+                zm = QLabel("Save important documents before the session is purged.")
+                zm.setStyleSheet(f"color: {PALETTE['text']}; background: transparent;")
+                zm.setFont(QFont(ADMIN_MONO, 7))
+                zm.setWordWrap(True)
+                self._zip_alert._download_btn = QPushButton("Download Zip")
+                self._zip_alert._download_btn.setFixedHeight(30)
+                self._zip_alert._download_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+                self._zip_alert._download_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                self._zip_alert._download_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: rgba(220, 60, 60, 25);
+                        color: {PALETTE['error']};
+                        border: 1px solid rgba(220, 60, 60, 60);
+                        border-radius: 4px;
+                        padding: 0 14px;
+                    }}
+                    QPushButton:hover {{ background: rgba(220, 60, 60, 45); }}
+                """)
+                self._zip_alert._download_btn.clicked.connect(self._download_zip)
+                zl.addWidget(zh)
+                zl.addWidget(zm)
+                zl.addWidget(self._zip_alert._download_btn)
+                self.layout().addWidget(self._zip_alert)
+            self._zip_alert.setVisible(True)
+            self._zip_alert.setFixedHeight(116)
+            self.setFixedHeight(180)
+            self._border_color = (220, 60, 60, 80)
+            self._glow_color = (255, 80, 80)
+            self.layout().activate()
+            self._zip_alert.update()
+            self.update()
+        else:
+            if self._zip_alert is not None:
+                self._zip_alert.setVisible(False)
+            self.setFixedHeight(64)
+            # Reset border/glow to default inactive colors
+            self._border_color = (60, 60, 80, 30)
+            self._glow_color = (90, 90, 110)
+
         # Start/stop animation based on state
         if card_state == "waiting" and not self._anim_timer.isActive():
             self._anim_timer.start(16)
@@ -2679,6 +2754,10 @@ class SessionCard(QFrame):
         self._apply_session(session)
         if old_state != self._card_state:
             self.update()
+
+    def _download_zip(self):
+        """Download a zip of all shared files/screenshots for this session."""
+        download_session_zip(self._session, self)
 
     def _anim_tick(self):
         self._anim_phase += 0.0025  # slow travel
@@ -2902,14 +2981,14 @@ class SessionListView(QWidget):
         self._active_layout.setSpacing(8)
         self._active_layout.addStretch()
         self._active_scroll.setWidget(self._active_container)
-        layout.addWidget(self._active_scroll, 1)
+        layout.addWidget(self._active_scroll, 2)
 
         # Fallback click detector on the scroll viewport — catches clicks that
         # the card itself may miss due to refresh/reparent timing.
         self._active_scroll.viewport().installEventFilter(self)
 
         # Inactive sessions (collapsed)
-        self._inactive_toggle = QPushButton("v  INACTIVE / EXPIRED")
+        self._inactive_toggle = QPushButton(">  INACTIVE / EXPIRED")
         self._inactive_toggle.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
         self._inactive_toggle.setStyleSheet(f"""
             QPushButton {{
@@ -2923,11 +3002,12 @@ class SessionListView(QWidget):
             QPushButton:hover {{ color: {PALETTE['text']}; }}
         """)
         self._inactive_toggle.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._inactive_collapsed = False
+        self._inactive_collapsed = True
         self._inactive_toggle.clicked.connect(self._toggle_inactive)
         layout.addWidget(self._inactive_toggle)
 
         self._inactive_scroll = QScrollArea()
+        self._inactive_scroll.setMinimumHeight(200)
         self._inactive_scroll.setWidgetResizable(True)
         self._inactive_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self._inactive_container = QWidget()
@@ -2938,7 +3018,7 @@ class SessionListView(QWidget):
         self._inactive_layout.addStretch()
         self._inactive_scroll.setWidget(self._inactive_container)
         self._inactive_scroll.setVisible(False)
-        layout.addWidget(self._inactive_scroll, 0)
+        layout.addWidget(self._inactive_scroll, 1)
 
         # Fallback click detector for inactive list too
         self._inactive_scroll.viewport().installEventFilter(self)
@@ -2951,18 +3031,26 @@ class SessionListView(QWidget):
 
     def _toggle_inactive(self):
         self._inactive_collapsed = not self._inactive_collapsed
-        self._inactive_scroll.setVisible(self._inactive_collapsed)
-        prefix = "v" if self._inactive_collapsed else ">"
+        self._inactive_scroll.setVisible(not self._inactive_collapsed)
+        prefix = ">" if self._inactive_collapsed else "v"
         self._inactive_toggle.setText(f"{prefix}  INACTIVE / EXPIRED")
 
     def eventFilter(self, watched, event):
-        """Fallback: route clicks on the scroll viewport to the card beneath."""
+        """Fallback: route clicks on the scroll viewport to the card beneath.
+
+        Clicks on interactive children (buttons) are left alone so their own
+        signals fire. Clicks on the card itself or non-interactive children
+        open the session detail view.
+        """
         if event.type() == QEvent.Type.MouseButtonPress:
             mouse_event = event
             if mouse_event.button() == Qt.MouseButton.LeftButton:
                 viewport = watched
                 pos = viewport.mapTo(self._active_container if viewport == self._active_scroll.viewport() else self._inactive_container, mouse_event.pos())
                 target = self._active_container.childAt(pos) if viewport == self._active_scroll.viewport() else self._inactive_container.childAt(pos)
+                # Let buttons and other interactive children handle their own clicks.
+                if isinstance(target, QPushButton):
+                    return False
                 card = None
                 w = target
                 while w is not None:
@@ -2982,6 +3070,9 @@ class SessionListView(QWidget):
     def _refresh(self):
         active = [s for s in self._sessions if s.status == "active"]
         inactive = [s for s in self._sessions if s.status != "active"]
+        # Show user-closed sessions at the top of the inactive list so the close alert
+        # and zip-download button are immediately visible without scrolling.
+        inactive = sorted(inactive, key=lambda s: (0 if s.status in ("user-closed", "closed") else 1, s.last_seen or ""))
 
         self.stat_active.set_value(str(len(active)), PALETTE["success"])
         self.stat_total.set_value(str(len(self._sessions)))
@@ -3064,6 +3155,7 @@ class SessionDetailView(QWidget):
         ".fetchall": "command",
         ".reset": "idle",
         ".pulse": "test_pulse",
+        ".vision": "vision",
     }
 
     def __init__(self, parent=None):
@@ -3199,7 +3291,7 @@ class SessionDetailView(QWidget):
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
 
-        # Quick actions — only Screenshot, Feed, Pause, Reset
+        # Quick actions — Screenshot, Feed, Pause, Pulse, Vision
         actions_label = QLabel("QUICK ACTIONS")
         actions_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
         actions_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
@@ -3211,12 +3303,12 @@ class SessionDetailView(QWidget):
         self.btn_feed = ControlButton("Feed", "40,220,100")
         self.btn_pause = ControlButton("Pause", "255,180,50")
         self.btn_pulse = ControlButton("Pulse", "220,30,40")
-        self.btn_idle = ControlButton("Reset", "139,139,154")
+        self.btn_vision = ControlButton("Vision", "220,80,180")
         actions_row.addWidget(self.btn_screenshot)
         actions_row.addWidget(self.btn_feed)
         actions_row.addWidget(self.btn_pause)
         actions_row.addWidget(self.btn_pulse)
-        actions_row.addWidget(self.btn_idle)
+        actions_row.addWidget(self.btn_vision)
         left_layout.addLayout(actions_row)
 
         # Command input
@@ -3355,7 +3447,7 @@ class SessionDetailView(QWidget):
         self.btn_feed.clicked.connect(lambda: self._quick("feedme"))
         self.btn_pause.clicked.connect(lambda: self._quick("paused"))
         self.btn_pulse.clicked.connect(lambda: self._quick("test_pulse"))
-        self.btn_idle.clicked.connect(lambda: self._quick("idle"))
+        self.btn_vision.clicked.connect(lambda: self._quick("vision"))
 
     def _on_admin_animation_done_in_detail(self):
         """Local animation reached full size — nothing to do here, handled by widget."""
@@ -3433,18 +3525,9 @@ class SessionDetailView(QWidget):
             self.add_result("output", "Available Commands", "\n".join(sorted(self.COMMAND_MAP.keys())) + "\n.help")
             return
 
-        # Map command to orb state for visual feedback (use just the command word,
-        # so commands with arguments like ".scan C:\\path" still map correctly).
-        cmd_word = text.split(None, 1)[0].lower()
-        orb_state = self.COMMAND_MAP.get(cmd_word, "command")
-        self.quick_action.emit(self._session.id, orb_state)
-
-        # Send the raw .rift command to the portal so it can interpret it
-        # The portal handles .rift commands directly
-        send_command_to_session(self._session.id, "rift_command", command=text)
-
-        # Add to results
-        self.add_result("output", f"$ {text}", f"Command sent: {text}\nWaiting for response...")
+        # Hand the command to the admin console so it sends a single rift_command
+        # (and updates local orb state) without duplicating typed/rift commands.
+        self.command_sent.emit(self._session.id, text)
 
     def _send_chat(self):
         text = self._chat_input.text().strip()
@@ -5119,13 +5202,18 @@ class RiftAdminConsole(QWidget):
         """Close/end a session — sends force_close and returns to list."""
         if self._current_session and not self._confirm_close_session():
             return
-        # Send force_close command to the portal
+        # Send force_close command to the portal and mark the session as closed
+        # in Firebase so the admin UI immediately shows the close alert.
         send_command_to_session(session_id, "force_close")
+        try:
+            _firebase_put(f"sessions/{session_id}/status", "closed")
+        except Exception:
+            pass
         # Stop watching results
         self._firebase_worker.unwatch_results(session_id)
         for s in self._sessions:
             if s.id == session_id:
-                s.status = "inactive"
+                s.status = "closed"
                 s.portal_connected = False
                 break
         self._current_session = None
@@ -5171,105 +5259,83 @@ class RiftAdminConsole(QWidget):
         self._session_list.set_sessions(self._sessions)
 
     def _on_command_sent(self, session_id, text):
-        """Send a typed command to the portal client via Firebase."""
-        # Parse . commands
+        """Send a typed command to the portal client via Firebase.
+
+        All commands starting with '.' are sent as a single rift_command so the
+        portal interprets them directly. This avoids sending both a rift_command
+        and a separate typed command (which produced "command errors" even though
+        the action succeeded)."
+        """
         text = text.strip()
         if not text:
             return
 
-        cmd_map = {
-            ".scan": ("scan", {}),
-            ".screenshot": ("screenshot", {}),
-            ".pause": ("pause_portal", {}),
-            ".feed": ("feedme", {}),
-            ".reset": ("resume_portal", {}),
-            ".pulse": ("test_pulse", {}),
-            ".terminal": ("terminal", {}),
-            ".view": ("scan_directory", {}),
-            ".fetch": ("read_file", {}),
-            ".fetchall": ("scan_directory", {}),
-            ".delete": ("delete_file", {}),
-        }
-
-        parts = text.split(None, 1)
-        cmd_key = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-
-        if cmd_key == ".help":
+        cmd_word = text.split(None, 1)[0].lower()
+        if cmd_word == ".help":
             return
 
-        # Determine command type and extra params
-        if cmd_key in cmd_map:
-            cmd_type, _ = cmd_map[cmd_key]
-            extra = {}
-            if cmd_type == "scan" and arg:
-                extra["path"] = arg
-            elif cmd_type == "scan_directory" and arg:
-                extra["path"] = arg
-            elif cmd_type == "read_file" and arg:
-                extra["path"] = arg
-            elif cmd_type == "delete_file" and arg:
-                extra["path"] = arg
-            elif cmd_type == "terminal" and arg:
-                extra["command"] = arg
-        else:
-            # Unknown command — send as message
-            cmd_type = "message"
-            extra = {"text": text}
-
-        # Send via Firebase
-        cmd_id = send_command_to_session(session_id, cmd_type, **extra)
-
-        # Trigger orb
+        # Determine orb state for local visual feedback
         orb_state_map = {
-            "screenshot": "screenshot",
-            "pause_portal": "paused",
-            "feedme": "feedme",
-            "resume_portal": "idle",
-            "test_pulse": "test_pulse",
-            "terminal": "terminal",
-            "scan": "command",
-            "scan_directory": "command",
-            "read_file": "command",
-            "delete_file": "command",
-            "message": "command",
+            ".scan": "command",
+            ".view": "command",
+            ".fetch": "command",
+            ".fetchall": "command",
+            ".delete": "command",
+            ".terminal": "terminal",
+            ".screenshot": "screenshot",
+            ".pause": "paused",
+            ".feed": "feedme",
+            ".pulse": "test_pulse",
+            ".reset": "idle",
+            ".vision": "vision",
         }
-        orb_state = orb_state_map.get(cmd_type, "command")
+
+        if cmd_word.startswith("."):
+            # Send the raw .rift command to the portal interpreter
+            send_command_to_session(session_id, "rift_command", command=text)
+            orb_state = orb_state_map.get(cmd_word, "command")
+        else:
+            # Plain text — send as a message command
+            send_command_to_session(session_id, "message", text=text)
+            orb_state = "command"
+
         self._trigger_orb(orb_state)
 
         if self._current_session and self._current_session.id == session_id:
-            self._session_detail.add_result("output", f"$ {text}", f"Command sent to portal...\nType: {cmd_type}\nID: {cmd_id}")
+            self._session_detail.update_state(orb_state)
+            self._session_detail.add_result("output", f"$ {text}", "Command sent to portal...\nWaiting for response...")
 
     def _on_quick_action(self, session_id, action):
-        """Send a quick action command to the portal via Firebase."""
-        action_map = {
-            "screenshot": "screenshot",
-            "feedme": "feedme",
-            "paused": "pause_portal",
-            "test_pulse": "test_pulse",
-            "idle": "resume_portal",
-        }
-        cmd_type = action_map.get(action, action)
-        send_command_to_session(session_id, cmd_type)
+        """Send a quick action command to the portal via Firebase.
 
-        # Trigger orb locally
-        orb_state_map = {
-            "screenshot": "screenshot",
-            "feedme": "feedme",
-            "paused": "paused",
-            "test_pulse": "test_pulse",
-            "idle": "idle",
+        Quick action buttons toggle their mode on the second press. Instead of
+        sending a separate typed command and a rift_command, we send a single
+        rift_command (e.g. '.feed') and let the portal toggle the state itself.
+        """
+        # Map the action name to the rift_command text
+        action_cmd_map = {
+            "screenshot": ".screenshot",
+            "feedme": ".feed",
+            "paused": ".pause",
+            "test_pulse": ".pulse",
+            "vision": ".vision",
         }
-        orb_state = orb_state_map.get(action, "command")
-        self._trigger_orb(orb_state)
+        cmd_text = action_cmd_map.get(action, action)
+        send_command_to_session(session_id, "rift_command", command=cmd_text)
 
-        # Update session state
+        # Toggle the local orb state for Feed/Pause/Pulse/Vision; Screenshot is one-shot
+        toggle_actions = {"feedme", "paused", "test_pulse", "vision"}
+        target_state = action
         for s in self._sessions:
             if s.id == session_id:
-                s.orb_state = orb_state
+                if action in toggle_actions and s.orb_state == action:
+                    target_state = "idle"
+                s.orb_state = target_state
                 if self._current_session and self._current_session.id == session_id:
-                    self._session_detail.update_state(orb_state)
+                    self._session_detail.update_state(target_state)
                 break
+
+        self._trigger_orb(target_state)
 
     def _trigger_orb(self, state):
         """Trigger the sidebar orb to flash a state."""
@@ -5284,6 +5350,8 @@ class RiftAdminConsole(QWidget):
         elif state == "terminal":
             self.orb.flash_terminal()
         elif state == "command":
+            self.orb.flash_command()
+        elif state == "vision":
             self.orb.flash_command()
         elif state == "idle":
             self.orb.set_state("idle")
