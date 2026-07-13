@@ -1741,9 +1741,9 @@ class OrbWidget(QWidget):
             b = base_r * 0.88
             eye_path = self._vesica_path(a, b)
 
-            # Black pupil/rift: taller, sharper, slightly wider
-            pa = base_r * 0.14
-            pb = base_r * 0.42
+            # Black pupil/rift: tall, sharp vertical slit
+            pa = base_r * 0.10
+            pb = base_r * 0.45
             pupil_path = self._vesica_path(pa, pb)
 
             # The pupil/iris follows the mouse subtly via the lean values
@@ -1776,14 +1776,19 @@ class OrbWidget(QWidget):
             painter.drawEllipse(QPointF(0, 0), iris_r, iris_r)
 
             # Organic fringe detail radiating from the pupil edge
-            fringe_path = self._fringe_path(pupil_path, base_r * 0.05)
+            fringe_path = self._fringe_path(pupil_path, base_r * 0.08)
 
             # Black pupil/rift: slowly closes left-to-right
             painter.scale(max(0.02, self._vision_open), 1.0)
 
-            fringe_color = QColor(min(255, er + 40), min(255, eg + 40), min(255, eb + 40), 110)
-            fringe_pen = QPen(fringe_color)
-            fringe_pen.setWidthF(max(0.8, base_r * 0.015))
+            # Fringe is dark near the pupil and fades into the iris/sclera
+            fringe_grad = QRadialGradient(0, 0, base_r)
+            fringe_grad.setColorAt(0.0, QColor(0, 0, 0, 0))
+            fringe_grad.setColorAt(0.10, QColor(70, 12, 60, 170))
+            fringe_grad.setColorAt(0.30, QColor(40, 7, 35, 140))
+            fringe_grad.setColorAt(0.45, QColor(25, 4, 22, 110))
+            fringe_grad.setColorAt(0.60, QColor(10, 2, 10, 0))
+            fringe_pen = QPen(QBrush(fringe_grad), max(1.0, base_r * 0.017))
             painter.setPen(fringe_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(fringe_path)
