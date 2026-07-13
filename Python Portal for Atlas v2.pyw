@@ -1318,6 +1318,33 @@ class OrbWidget(QWidget):
         path.arcTo(c - r, -r, 2 * r, 2 * r, 180 - phi, 2 * phi)
         return path
 
+    def _fringe_path(self, source_path, base_len, seed=42):
+        """Short, organic outward spikes around the source path.
+
+        Used to add jagged detail around the edge of the Vision pupil/rift.
+        """
+        poly = source_path.toFillPolygon()
+        path = QPainterPath()
+        if len(poly) < 3:
+            return path
+        rng = random.Random(seed)
+        step = max(1, len(poly) // 24)
+        for i in range(0, len(poly), step):
+            p = poly[i]
+            x, y = p.x(), p.y()
+            d = math.hypot(x, y)
+            if d < 0.001:
+                continue
+            nx, ny = x / d, y / d
+            length = base_len * (0.4 + 0.6 * rng.random())
+            angle = (rng.random() - 0.5) * 0.8
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            ox = nx * cos_a - ny * sin_a
+            oy = nx * sin_a + ny * cos_a
+            path.moveTo(p)
+            path.lineTo(p.x() + ox * length, p.y() + oy * length)
+        return path
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -1714,14 +1741,14 @@ class OrbWidget(QWidget):
             b = base_r * 0.88
             eye_path = self._vesica_path(a, b)
 
-            # Black pupil/rift: taller, sharper, slightly wider
-            pa = base_r * 0.14
-            pb = base_r * 0.42
+            # Black pupil/rift: tall, sharp vertical slit
+            pa = base_r * 0.10
+            pb = base_r * 0.45
             pupil_path = self._vesica_path(pa, pb)
 
-            # The pupil/iris follows the mouse via the lean values
-            pupil_x = self._lean_x * base_r * 4.0
-            pupil_y = self._lean_y * base_r * 4.0
+            # The pupil/iris follows the mouse subtly via the lean values
+            pupil_x = self._lean_x * base_r * 2.0
+            pupil_y = self._lean_y * base_r * 2.0
 
             painter.save()
             painter.translate(cx, cy)
@@ -1735,19 +1762,11 @@ class OrbWidget(QWidget):
             painter.setBrush(QBrush(sclera_grad))
             painter.drawPath(eye_path)
 
-            # Subtle rim light along the outer eye edge
-            rim = QColor(min(255, er + 60), min(255, eg + 60), min(255, eb + 60), 80)
-            rim_pen = QPen(rim)
-            rim_pen.setWidthF(2.0)
-            painter.setPen(rim_pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(eye_path)
-
             # Move to pupil position for iris and pupil
             painter.translate(pupil_x, pupil_y)
 
             # Iris (colored glow around the black rift)
-            iris_r = base_r * 0.36
+            iris_r = base_r * 0.48
             iris_grad = QRadialGradient(0, 0, iris_r)
             iris_grad.setColorAt(0, QColor(min(255, er + 35), min(255, eg + 35), min(255, eb + 35), 160))
             iris_grad.setColorAt(0.6, QColor(er, eg, eb, 100))
@@ -1756,13 +1775,26 @@ class OrbWidget(QWidget):
             painter.setBrush(QBrush(iris_grad))
             painter.drawEllipse(QPointF(0, 0), iris_r, iris_r)
 
-            # Black pupil/rift: slowly closes left-to-right with a vertical sheen
+            # Organic fringe detail radiating from the pupil edge
+            fringe_path = self._fringe_path(pupil_path, base_r * 0.08)
+
+            # Black pupil/rift: slowly closes left-to-right
             painter.scale(max(0.02, self._vision_open), 1.0)
-            pupil_grad = QLinearGradient(0, -pb, 0, pb)
-            pupil_grad.setColorAt(0, QColor(8, 4, 12, 245))
-            pupil_grad.setColorAt(0.5, QColor(40, 15, 45, 210))
-            pupil_grad.setColorAt(1, QColor(8, 4, 12, 245))
-            painter.setBrush(QBrush(pupil_grad))
+
+            # Fringe is dark near the pupil and fades into the iris/sclera
+            fringe_grad = QRadialGradient(0, 0, base_r)
+            fringe_grad.setColorAt(0.0, QColor(0, 0, 0, 0))
+            fringe_grad.setColorAt(0.10, QColor(70, 12, 60, 170))
+            fringe_grad.setColorAt(0.30, QColor(40, 7, 35, 140))
+            fringe_grad.setColorAt(0.45, QColor(25, 4, 22, 110))
+            fringe_grad.setColorAt(0.60, QColor(10, 2, 10, 0))
+            fringe_pen = QPen(QBrush(fringe_grad), max(1.0, base_r * 0.017))
+            painter.setPen(fringe_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(fringe_path)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(8, 4, 12, 245)))
             painter.drawPath(pupil_path)
 
             painter.restore()
