@@ -1979,8 +1979,9 @@ class PortalWorker(QObject):
         # pressed Reopen Rift, in which case poll once per minute for 5 minutes.
         if self._owner._dormant:
             return 60 if self._owner._reconnect_window else None
-        if self._paused:
-            return 120
+        # While paused we still poll at the normal interval so a resume/.pause
+        # toggle is picked up promptly; the _poll_commands skip handles ignoring
+        # other commands while paused.
         return POLL_INTERVAL
 
     def run(self):
@@ -2016,8 +2017,16 @@ class PortalWorker(QObject):
             self._owner._executed_ids.add(cmd_id)
             self._owner._save_executed_ids()
             _portal_log(f"_poll_commands: new cmd id={cmd_id} type={cmd.get('type')}")
-            if self._paused and cmd.get("type") != "resume_portal":
-                continue
+            if self._paused:
+                # When paused, only allow explicit resume commands or the .pause
+                # rift_command toggle to pass through.
+                cmd_type = cmd.get("type", "")
+                if cmd_type == "resume_portal":
+                    pass
+                elif cmd_type == "rift_command" and cmd.get("command", "").strip().lower() == ".pause":
+                    pass
+                else:
+                    continue
             self.new_command.emit(cmd)
 
 
@@ -2514,6 +2523,27 @@ class ModernPortalWindow(QWidget):
         title_bar.mousePressEvent = self._title_mouse_press
         title_bar.mouseMoveEvent = self._title_mouse_move
 
+        # Dormant/reconnect state and flags must be initialized before the
+        # background workers start, or the worker threads can race ahead of
+        # __init__ and see missing attributes.
+        self.paused = False
+        self.muted = False
+        self._running = True
+        self._registered = False
+        self._executed_file = Path(__file__).parent / ".portal_executed.json"
+        self._executed_ids = self._load_executed_ids()
+        self._seen_chat_ids = set()
+        self._color_override = color_override
+        self._idle_color = PALETTE["accent"]
+        self._active_color = PALETTE["active"]
+        self._dormant = False
+        self._reconnect_window = False
+        self._poll_now = False
+        self._vision_last_click = 0  # used for double-click dedup in Vision mode
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._on_reconnect_timeout)
+
         # Background workers for Firebase polling (so the UI never freezes)
         self._poll_thread = QThread(self)
         self._poll_worker = PortalWorker(self)
@@ -2532,26 +2562,6 @@ class ModernPortalWindow(QWidget):
         self._reminder_timer = QTimer(self)
         self._reminder_timer.timeout.connect(self._send_reminder)
         self._reminder_timer.start(REMINDER_INTERVAL * 1000)
-
-        self.paused = False
-        self.muted = False
-        self._running = True
-        self._registered = False
-        self._executed_file = Path(__file__).parent / ".portal_executed.json"
-        self._executed_ids = self._load_executed_ids()
-        self._seen_chat_ids = set()
-        self._color_override = color_override
-        self._idle_color = PALETTE["accent"]
-        self._active_color = PALETTE["active"]
-
-        # Dormant/reconnect state after the admin closes the session
-        self._dormant = False
-        self._reconnect_window = False
-        self._poll_now = False
-        self._vision_last_click = 0  # used for double-click dedup in Vision mode
-        self._reconnect_timer = QTimer(self)
-        self._reconnect_timer.setSingleShot(True)
-        self._reconnect_timer.timeout.connect(self._on_reconnect_timeout)
 
         self._center()
         self.show()
@@ -2582,7 +2592,10 @@ class ModernPortalWindow(QWidget):
             self.orb.start_portal_opening()
             self._set_status("Rift opening...", PALETTE["active"])
         elif cmd_type == "rift_command":
-            self.orb.flash_command()
+            # _execute_rift_command handles its own orb state (toggle modes,
+            # command flashes, etc.). Flashing here would overwrite the state
+            # used for toggle decisions.
+            pass
         else:
             self.orb.flash_command()
         ok, result = self._execute_command(cmd)
@@ -2597,8 +2610,12 @@ class ModernPortalWindow(QWidget):
         self._set_status(result[:60], color)
         # Persistent modes (paused, feedme, test_pulse, vision) should keep their
         # status text instead of flipping back to "Rift idle" after a few seconds.
-        if not self.paused and self.orb._state not in ("paused", "feedme", "test_pulse", "vision"):
-            QTimer.singleShot(2500, lambda: self._set_status("Rift idle", self._idle_color))
+        # The check is done when the timer fires, not when it is scheduled, so a
+        # brief flash_command that restores to a persistent state is respected.
+        def _maybe_reset_idle():
+            if not self.paused and self.orb._state not in ("paused", "feedme", "test_pulse", "vision"):
+                self._set_status("Rift idle", self._idle_color)
+        QTimer.singleShot(2500, _maybe_reset_idle)
 
     def closeEvent(self, event):
         # Route the first close request through the same confirmation flow as
@@ -2843,16 +2860,18 @@ class ModernPortalWindow(QWidget):
         ok, result = self._execute_command({"type": "screenshot", "id": cmd_id})
         if ok:
             _write_command_result(cmd_id, "screenshot", True, result)
-            self.orb.end_screenshot()
+            # Return to Vision state so the eye stays active after the snapshot.
+            self.orb.set_state("vision")
             self._set_status("Vision snapshot sent", PALETTE["success"])
             return
 
-        self.orb.end_screenshot()
         # If capture failed and we're on macOS, show a platform notice.
         if platform.system() == "Darwin":
+            self.orb.set_state("vision")
             self._set_status("Not compatible with mac", PALETTE["error"])
             _post_to_discord("[Vision] Desktop capture not supported on macOS.")
         else:
+            self.orb.set_state("vision")
             self._set_status("Vision snapshot failed", PALETTE["error"])
 
     def _toggle_chat(self):
@@ -3160,6 +3179,15 @@ class ModernPortalWindow(QWidget):
         parts = rift_cmd.split(None, 1)
         cmd_name = parts[0].lower() if parts else ""
         arg = parts[1].strip() if len(parts) > 1 else cmd.get("path", cmd.get("content", ""))
+
+        # Transient rift commands (.scan, .view, .terminal, etc.) flash the orb.
+        # Toggle/mode commands (.pause, .feed, .pulse, .vision, .reset, .screenshot)
+        # manage their own state.
+        if cmd_name not in (".pause", ".feed", ".pulse", ".vision", ".reset", ".screenshot"):
+            if cmd_name == ".terminal":
+                self.orb.flash_terminal()
+            else:
+                self.orb.flash_command()
 
         # .scan — scan the current directory (or a given path) for files
         if cmd_name == ".scan":
