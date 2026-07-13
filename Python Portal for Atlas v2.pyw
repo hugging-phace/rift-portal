@@ -44,7 +44,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QTextEdit, QLineEdit, QFrame, QSizePolicy, QGraphicsDropShadowEffect
+    QScrollArea, QTextEdit, QLineEdit, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
+    QDialog
 )
 
 # ------------------------------------------------------------------
@@ -224,6 +225,7 @@ def _mark_portal_opened():
             "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
         _firebase_put(f"sessions/{SESSION_ID}/portal_connected", True)
+        _firebase_put(f"sessions/{SESSION_ID}/status", "open")
         _firebase_put(f"sessions/{SESSION_ID}/card_state", "connected")
     except Exception as e:
         _portal_log(f"_mark_portal_opened error: {e}")
@@ -513,6 +515,26 @@ def _speak_text(text):
         pass
 
 
+def _play_message_sound():
+    """Play the native system alert sound for incoming chat messages."""
+    try:
+        if platform.system() == "Windows":
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                return
+            except Exception:
+                pass
+        elif platform.system() == "Darwin":
+            subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"], check=False, timeout=5)
+            return
+        # Fallback to Qt's built-in beep
+        from PySide6.QtWidgets import QApplication
+        QApplication.beep()
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------------
 # UI: frosted glass container
 # ------------------------------------------------------------------
@@ -530,27 +552,32 @@ class FrostedContainer(QFrame):
         rect = self.rect()
         radius = 22
 
-        # Frosted glass fill: semi-transparent dark gradient
+        # Frosted glass fill: slightly darker and less transparent
         fill_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
-        fill_grad.setColorAt(0, QColor(26, 24, 42, 238))
-        fill_grad.setColorAt(0.5, QColor(20, 19, 34, 245))
-        fill_grad.setColorAt(1, QColor(14, 13, 26, 250))
+        fill_grad.setColorAt(0, QColor(22, 21, 38, 245))
+        fill_grad.setColorAt(0.5, QColor(16, 15, 30, 250))
+        fill_grad.setColorAt(1, QColor(10, 9, 22, 252))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(fill_grad))
         painter.drawRoundedRect(rect, radius, radius)
 
         # Soft top highlight (glass sheen)
         sheen_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.top() + rect.height() * 0.35)
-        sheen_grad.setColorAt(0, QColor(255, 255, 255, 20))
+        sheen_grad.setColorAt(0, QColor(255, 255, 255, 40))
+        sheen_grad.setColorAt(0.6, QColor(255, 255, 255, 10))
         sheen_grad.setColorAt(1, QColor(255, 255, 255, 0))
         sheen_rect = rect.adjusted(2, 2, -2, 0)
         sheen_rect.setHeight(int(rect.height() * 0.35))
         painter.setBrush(QBrush(sheen_grad))
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(sheen_rect, radius, radius)
 
-        # Thin purple border
-        pen = QPen(QColor(154, 89, 182, 45))
-        pen.setWidthF(1.5)
+        # Glass-like gradient border: brighter at the top, moodier at the bottom
+        border_grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+        border_grad.setColorAt(0, QColor(200, 160, 240, 100))
+        border_grad.setColorAt(0.5, QColor(154, 89, 182, 60))
+        border_grad.setColorAt(1, QColor(110, 60, 170, 45))
+        pen = QPen(QBrush(border_grad), 1.5)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius, radius)
@@ -571,15 +598,16 @@ _DM_COLORS = [
 ]
 # State color overrides (r, g, b) — particles tint toward these
 _STATE_COLORS = {
-    "awaiting":       None,              # pure black — no connection yet
-    "portal_opening": None,              # pink+blue needle growing to idle
-    "idle":           None,              # violet palette
-    "command":        (40, 120, 220),    # blend of blues — deep sea blue
-    "terminal":       (140, 60, 220),    # purple — terminal command
-    "screenshot":     (220, 200, 40),    # yellow — screenshot in progress
-    "test_pulse":     (220, 30, 40),     # intense red
-    "paused":         (255, 180, 50),    # amber/yellow light
-    "feedme":         (40, 220, 100),    # green
+    "awaiting":        None,              # pure black — no connection yet
+    "portal_opening":  None,              # pink+blue needle growing to idle
+    "portal_closing":  None,              # violet shrinking back to dormant needle
+    "idle":            None,              # violet palette
+    "command":         (40, 120, 220),    # blend of blues — deep sea blue
+    "terminal":        (140, 60, 220),    # purple — terminal command
+    "screenshot":      (220, 200, 40),    # yellow — screenshot in progress
+    "test_pulse":      (220, 30, 40),     # intense red
+    "paused":          (255, 180, 50),    # amber/yellow light
+    "feedme":          (40, 220, 100),    # green
 }
 
 
@@ -810,15 +838,18 @@ class OrbWidget(QWidget):
       feedme       - portal waking up, faster, more layers, brighter
     """
 
+    state_changed = Signal(str)  # emitted when the orb state changes
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(260, 260)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
-        # Two independent phases for opposing motion
+        # Three independent phases for layered motion
         self._field_phase = random.random() * math.pi * 2   # outer dark field (CCW)
         self._edge_phase = random.random() * math.pi * 2     # magical edge (CW)
+        self._inner_phase = random.random() * math.pi * 2     # inner rift rotation
         self._state = "awaiting"  # starts with no connection
 
         # Smoothly interpolated state values
@@ -972,19 +1003,25 @@ class OrbWidget(QWidget):
         # Vortex strength: builds up in feedme, decays otherwise
         self._vortex_strength = self._lerp(self._vortex_strength, self._target_vortex_strength, ease)
 
-        # Alert flash decays — fast, split-second flash
+        # Alert flash decays — fast, split-second flash that overpowers other glows
         if self._alert_flash > 0:
-            self._alert_flash = max(0, self._alert_flash - dt * 5.0)
+            self._alert_flash = max(0, self._alert_flash - dt * 8.0)
 
-        # Portal opening: progress grows from 0 to 1, then transitions to idle
+        # Portal opening/closing: progress grows/shrinks, then transitions
         if self._state == "portal_opening":
             self._portal_opening_progress = min(1.0, self._portal_opening_progress + dt * 0.4)
             if self._portal_opening_progress >= 1.0:
                 self.set_state("idle")
+        elif self._state == "portal_closing":
+            self._portal_opening_progress = max(0.0, self._portal_opening_progress - dt * 0.4)
+            if self._portal_opening_progress <= 0.0:
+                self.set_state("awaiting")
         else:
-            # Reset progress when not in portal_opening (so it can replay)
+            # Reset progress when not in portal_opening/closing (so it can replay)
             if self._state != "awaiting" and self._portal_opening_progress > 0:
                 self._portal_opening_progress = max(0, self._portal_opening_progress - dt * 2.0)
+            elif self._state == "awaiting":
+                self._portal_opening_progress = 0.0
 
         self._scale = self._lerp(self._scale, self._target_scale, ease)
         self._speed_mul = self._lerp(self._speed_mul, self._target_speed_mul, ease)
@@ -1019,6 +1056,9 @@ class OrbWidget(QWidget):
             edge_speed = 0.52 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost
         self._field_phase -= dt * field_speed  # counter-clockwise
         self._edge_phase += dt * edge_speed    # clockwise
+        # Inner rift: clear but controlled rotation at the opening
+        inner_speed = 0.45 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost
+        self._inner_phase += dt * inner_speed
 
         if self._initialized:
             w, h = self.width(), self.height()
@@ -1055,6 +1095,16 @@ class OrbWidget(QWidget):
             self._target_tint = None
             self._target_tint_blend = 0.0
             # Don't reset progress here — it grows in _tick
+        elif state == "portal_closing":
+            # Needle point that shrinks — violet fading back to pink+blue, then gone
+            self._target_scale = 1.0
+            self._target_speed_mul = 0.8
+            self._target_glow = 0.0
+            self._target_edge_layers = 3
+            self._target_edge_intensity = 0.08
+            self._target_tint = None
+            self._target_tint_blend = 0.0
+            # Don't reset progress here — it shrinks in _tick
         elif state == "idle":
             self._target_scale = 1.0
             self._target_speed_mul = 1.0
@@ -1113,6 +1163,8 @@ class OrbWidget(QWidget):
             self._target_tint_blend = 0.6
             self._target_vortex_strength = 1.0
 
+        self.state_changed.emit(state)
+
     def flash_command(self):
         """Brief blue energy flash for regular commands."""
         previous = self._state
@@ -1141,6 +1193,11 @@ class OrbWidget(QWidget):
         """Begin the portal opening animation — needle point grows to idle."""
         self._portal_opening_progress = 0.0
         self.set_state("portal_opening")
+
+    def start_portal_closing(self):
+        """Begin the portal closing animation — active portal shrinks back to dormant."""
+        self._portal_opening_progress = 1.0
+        self.set_state("portal_closing")
 
     def set_paused(self, paused):
         if paused:
@@ -1217,13 +1274,13 @@ class OrbWidget(QWidget):
         # Awaiting: orb shrinks to near nothing — empty space
         if self._state == "awaiting":
             base_r *= 0.02
-        # Portal opening: needle point grows from 0.02 to 1.0
-        if self._state == "portal_opening":
+        # Portal opening/closing: needle point grows/shrinks between 0.02 and 1.0
+        if self._state in ("portal_opening", "portal_closing"):
             prog = self._portal_opening_progress
             base_r *= 0.02 + 0.98 * prog
         # Gentle whole-portal breathing — very subtle, makes it feel alive
         # Only in idle and colored states (not paused/pulse which have their own size behavior)
-        if self._state not in ("paused", "test_pulse", "awaiting", "portal_opening"):
+        if self._state not in ("paused", "test_pulse", "awaiting", "portal_opening", "portal_closing"):
             breath_scale = 1.0 + 0.03 * math.sin(self._breath_phase * 0.6)
             base_r *= breath_scale
 
@@ -1245,6 +1302,40 @@ class OrbWidget(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(center_grad))
         painter.drawEllipse(QPointF(cx, cy), base_r * 0.7, base_r * 0.7)
+
+        # ---- 1b. Inner rift rotation — slow, visible arcs at the opening ----
+        if self._state != "awaiting":
+            num_inner_arcs = 4
+            inner_base_r = base_r * 0.40
+            for i in range(num_inner_arcs):
+                arc_r = inner_base_r * (0.85 + 0.15 * math.sin(self._pulse_phase * 0.7 + i * 1.3))
+                arc_phase = self._inner_phase + i * (2 * math.pi / num_inner_arcs)
+                arc_path = QPainterPath()
+                steps = 16
+                for j in range(steps + 1):
+                    t = j / steps
+                    a = arc_phase + t * (math.pi * 0.6)
+                    px = cx + math.cos(a) * arc_r
+                    py = cy + math.sin(a) * arc_r
+                    if j == 0:
+                        arc_path.moveTo(px, py)
+                    else:
+                        arc_path.lineTo(px, py)
+                if tint and self._tint_blend > 0.01:
+                    tr, tg, tb = tint
+                    blend = self._tint_blend * 0.45
+                    ir = int(45 * (1 - blend) + tr * blend)
+                    ig = int(22 * (1 - blend) + tg * blend)
+                    ib = int(62 * (1 - blend) + tb * blend)
+                else:
+                    ir, ig, ib = 45, 22, 62
+                arc_alpha = int(28 + 18 * math.sin(self._pulse_phase * 1.8 + i))
+                pen = QPen(QColor(ir, ig, ib, arc_alpha))
+                pen.setWidthF(1.1 + 0.35 * (i % 2))
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(arc_path)
 
         # ---- 2. Drifting dark particles (skip in awaiting state) ----
         if self._state != "awaiting":
@@ -1359,8 +1450,8 @@ class OrbWidget(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(blob)
 
-        # ---- 5. Portal opening: needle point grows, pink+blue fading to violet ----
-        if self._state == "portal_opening":
+        # ---- 5. Portal opening/closing: needle point grows/shrinks, pink+blue fading to violet ----
+        if self._state in ("portal_opening", "portal_closing"):
             prog = self._portal_opening_progress  # 0..1
             # Color shifts from pink+blue to violet as it grows
             # Pink (255, 80, 200) + Blue (40, 120, 220) → Violet (90, 45, 110)
@@ -1481,27 +1572,38 @@ class OrbWidget(QWidget):
             af = self._alert_flash  # 0..1, decays fast
             # Big ring flash — expands from center, contained within base_r
             # Ring radius grows quickly then fades
-            ring_r = base_r * (0.3 + 0.55 * (1.0 - af))  # expands as it fades
+            ring_r = base_r * (0.25 + 0.65 * (1.0 - af))  # expands as it fades
             ring_blob = self._blob_path(cx, cy, ring_r, self._edge_phase,
-                                        seed=7.0, intensity=0.10 + 0.06 * af)
-            # Bright pink ring — feathered edges
+                                        seed=7.0, intensity=0.10 + 0.08 * af)
+            # Bright pink ring — feathered edges, overpowering other glows
             ring_grad = QRadialGradient(cx, cy, ring_r)
             ring_grad.setColorAt(0, QColor(255, 80, 200, 0))
-            ring_grad.setColorAt(0.85, QColor(255, 80, 200, int(40 * af)))
-            ring_grad.setColorAt(0.93, QColor(255, 100, 210, int(180 * af)))
-            ring_grad.setColorAt(0.98, QColor(255, 80, 200, int(100 * af)))
+            ring_grad.setColorAt(0.82, QColor(255, 80, 200, int(60 * af)))
+            ring_grad.setColorAt(0.90, QColor(255, 100, 215, int(230 * af)))
+            ring_grad.setColorAt(0.97, QColor(255, 90, 205, int(140 * af)))
             ring_grad.setColorAt(1, QColor(220, 60, 180, 0))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(ring_grad))
             painter.drawPath(ring_blob)
 
+            # Bright core flash — brief hot center burst
+            core_flash_r = base_r * (0.45 + 0.25 * (1.0 - af))
+            core_flash_blob = self._blob_path(cx, cy, core_flash_r, self._field_phase,
+                                              seed=9.0, intensity=0.06 + 0.08 * af)
+            core_flash_grad = QRadialGradient(cx, cy, core_flash_r)
+            core_flash_grad.setColorAt(0, QColor(255, 120, 220, int(90 * af)))
+            core_flash_grad.setColorAt(0.4, QColor(255, 80, 200, int(40 * af)))
+            core_flash_grad.setColorAt(1, QColor(255, 60, 180, 0))
+            painter.setBrush(QBrush(core_flash_grad))
+            painter.drawPath(core_flash_blob)
+
             # Faded glow behind the ring
-            glow_r = base_r * 0.7
+            glow_r = base_r * 0.75
             glow_blob = self._blob_path(cx, cy, glow_r, self._field_phase,
                                         seed=8.0, intensity=0.08)
             glow_grad = QRadialGradient(cx, cy, glow_r)
-            glow_grad.setColorAt(0, QColor(255, 80, 200, int(25 * af)))
-            glow_grad.setColorAt(0.5, QColor(220, 60, 180, int(15 * af)))
+            glow_grad.setColorAt(0, QColor(255, 80, 200, int(45 * af)))
+            glow_grad.setColorAt(0.5, QColor(220, 60, 180, int(25 * af)))
             glow_grad.setColorAt(1, QColor(180, 40, 140, 0))
             painter.setBrush(QBrush(glow_grad))
             painter.drawPath(glow_blob)
@@ -1583,6 +1685,7 @@ class ChatBubble(QFrame):
 class ChatWindow(QWidget):
     message_sent = Signal(str)
     mute_toggled = Signal(bool)
+    close_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1637,9 +1740,19 @@ class ChatWindow(QWidget):
         """)
         self.mute_btn.toggled.connect(self._on_mute)
 
+        close_btn = QPushButton("x")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 12px; border: none; }
+            QPushButton:hover { background: #8b3a3a; color: #f0f0f5; }
+        """)
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.clicked.connect(self._on_close)
+
         header_layout.addWidget(title)
         header_layout.addStretch()
         header_layout.addWidget(self.mute_btn)
+        header_layout.addWidget(close_btn)
         layout.addWidget(header)
 
         # Messages
@@ -1717,6 +1830,9 @@ class ChatWindow(QWidget):
         self.add_message("You", text, is_atlas=False)
         self.message_sent.emit(text)
 
+    def _on_close(self):
+        self.close_requested.emit()
+
     def add_message(self, sender, text, is_atlas=True):
         stretch = self.messages_layout.takeAt(self.messages_layout.count() - 1)
         bubble = ChatBubble(sender, text, is_atlas=is_atlas)
@@ -1760,18 +1876,34 @@ class PortalWorker(QObject):
     def stop(self):
         self._running = False
 
+    def _get_interval(self):
+        # Dormant after agent-close: no polling at all unless the user has
+        # pressed Reopen Rift, in which case poll once per minute for 5 minutes.
+        if self._owner._dormant:
+            return 60 if self._owner._reconnect_window else None
+        if self._paused:
+            return 120
+        return POLL_INTERVAL
+
     def run(self):
+        last_poll = 0
         while self._running:
-            try:
-                self._poll_commands()
-            except Exception:
-                pass
-            # When paused, poll every 2 minutes; when active, every POLL_INTERVAL
-            interval = 120 if self._paused else POLL_INTERVAL
-            for _ in range(int(interval * 10)):
-                if not self._running:
-                    return
-                time.sleep(0.1)
+            now = time.time()
+            interval = self._get_interval()
+            if interval is None:
+                # Fully dormant: just sleep until the state changes
+                if self._owner._poll_now:
+                    self._owner._poll_now = False
+                time.sleep(1)
+                continue
+            if self._owner._poll_now or (now - last_poll >= interval):
+                self._owner._poll_now = False
+                try:
+                    self._poll_commands()
+                except Exception:
+                    pass
+                last_poll = time.time()
+            time.sleep(1)
 
     def _poll_commands(self):
         data = _firebase_get(f"sessions/{SESSION_ID}/commands")
@@ -1805,16 +1937,30 @@ class ChatWorker(QObject):
     def stop(self):
         self._running = False
 
+    def _get_interval(self):
+        if self._owner._dormant:
+            return 60 if self._owner._reconnect_window else None
+        return CHAT_POLL_INTERVAL
+
     def run(self):
+        last_poll = 0
         while self._running:
-            try:
-                self._poll_chat()
-            except Exception:
-                pass
-            for _ in range(int(CHAT_POLL_INTERVAL * 10)):
-                if not self._running:
-                    return
-                time.sleep(0.1)
+            now = time.time()
+            interval = self._get_interval()
+            if interval is None:
+                # Fully dormant: don't poll chat at all until the user reopens
+                if self._owner._poll_now:
+                    self._owner._poll_now = False
+                time.sleep(1)
+                continue
+            if self._owner._poll_now or (now - last_poll >= interval):
+                self._owner._poll_now = False
+                try:
+                    self._poll_chat()
+                except Exception:
+                    pass
+                last_poll = time.time()
+            time.sleep(1)
 
     def _poll_chat(self):
         data = _firebase_get(f"sessions/{SESSION_ID}/chat")
@@ -1849,6 +1995,279 @@ class ChatWorker(QObject):
 # ------------------------------------------------------------------
 # UI: main window
 # ------------------------------------------------------------------
+class RiftCloseConfirmDialog(QDialog):
+    """On-theme confirmation shown before the user closes their Rift."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(420, 220)
+
+        container = QFrame(self)
+        container.setGeometry(0, 0, 420, 220)
+        container.setStyleSheet(f"""
+            QFrame {{
+                background-color: rgba(18, 17, 30, 245);
+                border: 1px solid rgba(154, 89, 182, 50);
+                border-radius: 16px;
+            }}
+        """)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Close this Rift?")
+        title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        msg = QLabel("Closing this Rift will break the connection for the current session. Are you sure?")
+        msg.setFont(QFont("Segoe UI", 10))
+        msg.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        msg.setWordWrap(True)
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(msg, 1)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        ask_btn = QPushButton("Ask IT Support")
+        ask_btn.setFixedHeight(32)
+        ask_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        ask_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        ask_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255, 255, 255, 12);
+                color: {PALETTE['muted']};
+                border: 1px solid rgba(255, 255, 255, 25);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(255, 255, 255, 22); color: {PALETTE['text']}; }}
+        """)
+        ask_btn.clicked.connect(self._ask_it_support)
+
+        close_btn = QPushButton("Yes - close it")
+        close_btn.setFixedHeight(32)
+        close_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(220, 60, 60, 35);
+                color: #ff8a8a;
+                border: 1px solid rgba(220, 60, 60, 60);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(220, 60, 60, 55); }}
+        """)
+        close_btn.clicked.connect(self.accept)
+
+        btn_layout.addWidget(ask_btn)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+        self._parent_window = parent
+        self._drag_pos = None
+
+    def _ask_it_support(self):
+        if self._parent_window:
+            self._parent_window._send_user_message("I'm not sure if I should close this Rift yet. Can you confirm?")
+        self.reject()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        event.accept()
+
+
+class RiftAgentClosedDialog(QDialog):
+    """Shown when the admin (Rift Agent) closes the session from the console."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(440, 220)
+
+        container = QFrame(self)
+        container.setGeometry(0, 0, 440, 220)
+        container.setStyleSheet(f"""
+            QFrame {{
+                background-color: rgba(18, 17, 30, 245);
+                border: 1px solid rgba(154, 89, 182, 50);
+                border-radius: 16px;
+            }}
+        """)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Session Closed")
+        title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        msg = QLabel("Rift Agent just closed this session. You can close your Rift now, or leave it open if you believe they might need to reconnect later.")
+        msg.setFont(QFont("Segoe UI", 10))
+        msg.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        msg.setWordWrap(True)
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(msg, 1)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        dormant_btn = QPushButton("Go Dormant")
+        dormant_btn.setFixedHeight(32)
+        dormant_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        dormant_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        dormant_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(154, 89, 182, 35);
+                color: {PALETTE['accent_bright']};
+                border: 1px solid rgba(154, 89, 182, 60);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(154, 89, 182, 55); }}
+        """)
+        dormant_btn.clicked.connect(self.reject)
+
+        close_btn = QPushButton("Close Also")
+        close_btn.setFixedHeight(32)
+        close_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(220, 60, 60, 35);
+                color: #ff8a8a;
+                border: 1px solid rgba(220, 60, 60, 60);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(220, 60, 60, 55); }}
+        """)
+        close_btn.clicked.connect(self.accept)
+
+        btn_layout.addWidget(dormant_btn)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+        self._drag_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        event.accept()
+
+
+class RiftReopenConfirmDialog(QDialog):
+    """Confirmation shown when the user presses the persistent Reopen Rift button."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(420, 220)
+
+        container = QFrame(self)
+        container.setGeometry(0, 0, 420, 220)
+        container.setStyleSheet(f"""
+            QFrame {{
+                background-color: rgba(18, 17, 30, 245);
+                border: 1px solid rgba(154, 89, 182, 50);
+                border-radius: 16px;
+            }}
+        """)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Reopen this Rift?")
+        title.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        msg = QLabel("Are you sure you want to reopen this Rift? If the Agent is finished working this can be closed.")
+        msg.setFont(QFont("Segoe UI", 10))
+        msg.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        msg.setWordWrap(True)
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(msg, 1)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        close_btn = QPushButton("Close")
+        close_btn.setFixedHeight(32)
+        close_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255, 255, 255, 12);
+                color: {PALETTE['muted']};
+                border: 1px solid rgba(255, 255, 255, 25);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(255, 255, 255, 22); color: {PALETTE['text']}; }}
+        """)
+        close_btn.clicked.connect(self.reject)
+
+        reopen_btn = QPushButton("Yes Reopen")
+        reopen_btn.setFixedHeight(32)
+        reopen_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        reopen_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        reopen_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(154, 89, 182, 35);
+                color: {PALETTE['accent_bright']};
+                border: 1px solid rgba(154, 89, 182, 60);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(154, 89, 182, 55); }}
+        """)
+        reopen_btn.clicked.connect(self.accept)
+
+        btn_layout.addWidget(close_btn)
+        btn_layout.addWidget(reopen_btn)
+        layout.addLayout(btn_layout)
+
+        self._drag_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        event.accept()
+
+
 class ModernPortalWindow(QWidget):
     def __init__(self, portal_folder, color_override=None):
         super().__init__()
@@ -1856,10 +2275,11 @@ class ModernPortalWindow(QWidget):
         self.executed_file = Path(__file__).resolve()
         self.user_closed_once = False
 
-        # Frameless + translucent compact portal — not always on top
+        # Frameless + translucent compact portal — shows in the taskbar
+        # so it can be recovered if it slips behind other windows.
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Window
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(260, 360)
@@ -1882,7 +2302,7 @@ class ModernPortalWindow(QWidget):
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Python Portal")
+        title = QLabel("Rift")
         title.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
 
@@ -1922,14 +2342,17 @@ class ModernPortalWindow(QWidget):
         self.orb = OrbWidget(orb_area)
         self.orb.setFixedSize(160, 160)
         self.orb.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.orb.state_changed.connect(self._on_orb_state_changed)
         orb_layout.addWidget(self.orb, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout.addSpacing(6)
         layout.addWidget(orb_area, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.status_label = QLabel("Awaiting portal connection")
+        self.status_label = QLabel("Awaiting Rift connection")
         self.status_label.setFont(QFont("Segoe UI", 9))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.status_label.setFixedWidth(220)
         self.status_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
         layout.addWidget(self.status_label)
 
@@ -1956,8 +2379,27 @@ class ModernPortalWindow(QWidget):
         """)
         self.chat_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.chat_btn.clicked.connect(self._toggle_chat)
+
+        self.reopen_btn = QPushButton("Reopen Rift")
+        self.reopen_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.reopen_btn.setFixedHeight(26)
+        self.reopen_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(154, 89, 182, 35);
+                color: {PALETTE['accent_bright']};
+                border-radius: 13px;
+                padding: 0 16px;
+                border: 1px solid rgba(154, 89, 182, 60);
+            }}
+            QPushButton:hover {{ background-color: rgba(154, 89, 182, 55); }}
+        """)
+        self.reopen_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.reopen_btn.clicked.connect(self._on_reopen_rift)
+        self.reopen_btn.setVisible(False)
+
         footer_layout.addStretch()
         footer_layout.addWidget(self.chat_btn)
+        footer_layout.addWidget(self.reopen_btn)
         footer_layout.addStretch()
         layout.addWidget(footer)
 
@@ -1965,6 +2407,7 @@ class ModernPortalWindow(QWidget):
         self.chat = ChatWindow(self)
         self.chat.message_sent.connect(self._send_user_message)
         self.chat.mute_toggled.connect(self._on_mute_toggled)
+        self.chat.close_requested.connect(self._hide_chat)
         self.chat_visible = False
 
         # Window drag
@@ -2002,9 +2445,17 @@ class ModernPortalWindow(QWidget):
         self._idle_color = PALETTE["accent"]
         self._active_color = PALETTE["active"]
 
+        # Dormant/reconnect state after the admin closes the session
+        self._dormant = False
+        self._reconnect_window = False
+        self._poll_now = False
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._on_reconnect_timeout)
+
         self._center()
         self.show()
-        self._set_status("Awaiting portal connection", PALETTE["muted"])
+        self._set_status("Awaiting Rift connection", PALETTE["muted"])
         self._position_chat()
 
     def _on_new_command(self, cmd):
@@ -2031,8 +2482,9 @@ class ModernPortalWindow(QWidget):
         elif cmd_type == "stop_test_pulse":
             self.orb.set_state("idle")
         elif cmd_type == "portal_open":
+            self._exit_dormant()
             self.orb.start_portal_opening()
-            self._set_status("Portal opening...", PALETTE["active"])
+            self._set_status("Rift opening...", PALETTE["active"])
         elif cmd_type == "rift_command":
             self.orb.flash_command()
         else:
@@ -2044,7 +2496,7 @@ class ModernPortalWindow(QWidget):
         color = PALETTE["success"] if ok else PALETTE["error"]
         self._set_status(result[:60], color)
         if not self.paused:
-            QTimer.singleShot(2500, lambda: self._set_status("Portal idle", self._idle_color))
+            QTimer.singleShot(2500, lambda: self._set_status("Rift idle", self._idle_color))
 
     def closeEvent(self, event):
         try:
@@ -2087,11 +2539,11 @@ class ModernPortalWindow(QWidget):
             if self.paused:
                 self.paused = False
                 self.orb.set_paused(False)
-                self._set_status("Portal resumed", PALETTE["success"])
+                self._set_status("Rift resumed", PALETTE["success"])
             else:
                 self.paused = True
                 self.orb.set_paused(True)
-                self._set_status("Portal paused", PALETTE["warning"])
+                self._set_status("Rift paused", PALETTE["warning"])
             self._poll_worker.set_paused(self.paused)
         elif key == Qt.Key.Key_F:
             if self.orb._state == "feedme":
@@ -2111,16 +2563,16 @@ class ModernPortalWindow(QWidget):
             self._set_status("Alert flash", PALETTE["active"])
         elif key == Qt.Key.Key_O:
             self.orb.start_portal_opening()
-            self._set_status("Portal opening", PALETTE["active"])
+            self._set_status("Rift opening", PALETTE["active"])
         elif key == Qt.Key.Key_S:
             self.orb.start_screenshot()
             self._set_status("Screenshot in progress", PALETTE["warning"])
             QTimer.singleShot(3000, lambda: (self.orb.end_screenshot(),
-                                             self._set_status("Portal idle", self._idle_color)))
+                                             self._set_status("Rift idle", self._idle_color)))
         elif key == Qt.Key.Key_Escape:
             self.paused = False
             self.orb.set_state("idle")
-            self._set_status("Portal idle", self._idle_color)
+            self._set_status("Rift idle", self._idle_color)
             self._poll_worker.set_paused(False)
         elif key == Qt.Key.Key_K:
             # Inject a test command into Firebase to verify the portal can receive commands.
@@ -2184,32 +2636,38 @@ class ModernPortalWindow(QWidget):
             self._handle_dropped_file(fpath)
 
     def _handle_dropped_file(self, file_path):
-        """Handle a file dropped onto the portal — upload info to Firebase for admin to see."""
+        """Handle a file dropped onto the portal — upload the actual file to Firebase for admin download."""
         try:
             p = Path(file_path)
             if not p.exists():
                 return
             size = p.stat().st_size
-            # Send a message to the admin chat about the dropped file
-            msg = f"File dropped: {p.name} ({size} bytes) from {p.parent}"
             _portal_log(f"File dropped: {file_path}")
-            # Write to Firebase chat
-            drop_id = uuid.uuid4().hex
-            ok = _firebase_put(
-                f"sessions/{SESSION_ID}/chat/{drop_id}",
+            try:
+                b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+            except Exception as e:
+                _portal_log(f"Drop read error: {e}")
+                return
+            drop_id = f"drop-{uuid.uuid4().hex[:12]}"
+            # Write the actual file data as a command result so the admin can download it
+            _write_command_result(
+                drop_id, "file_drop", True,
+                {"file": str(p), "data": b64}
+            )
+            # Brief chat note so the admin sees something happened
+            chat_id = uuid.uuid4().hex
+            _firebase_put(
+                f"sessions/{SESSION_ID}/chat/{chat_id}",
                 {
-                    "id": drop_id,
+                    "id": chat_id,
                     "sender": "portal",
-                    "text": msg,
+                    "text": f"File dropped: {p.name}",
                     "timestamp": datetime.now().isoformat(),
                     "type": "file_drop",
                     "file_name": p.name,
-                    "file_path": str(p),
                     "file_size": size,
                 },
             )
-            if not ok:
-                _portal_log(f"File drop notify failed to reach Firebase: {file_path}")
             self._set_status(f"File: {p.name}", PALETTE["active"])
             self.orb.flash_alert()
             # If in feedme mode, keep it; otherwise switch to feedme briefly
@@ -2233,6 +2691,30 @@ class ModernPortalWindow(QWidget):
 
     def _set_status(self, text, color=None):
         self.status_label.setText(text)
+
+    def _set_always_on_top(self, always_on_top):
+        """Toggle the window's stay-on-top flag without losing frameless/taskbar behavior."""
+        has_topmost = bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+        if always_on_top == has_topmost:
+            return
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
+        if always_on_top:
+            flags |= Qt.WindowType.WindowStaysOnTopHint
+        # Hide, reconfigure, then re-show to avoid crashes on translucent frameless windows.
+        was_visible = self.isVisible()
+        pos = self.pos()
+        self.hide()
+        self.setWindowFlags(flags)
+        if was_visible:
+            self.show()
+            self.move(pos)
+            if always_on_top:
+                self.raise_()
+                self.activateWindow()
+
+    def _on_orb_state_changed(self, state):
+        """Keep the window always-on-top only while in feedme mode."""
+        self._set_always_on_top(state == "feedme")
 
     def _toggle_chat(self):
         if self.chat_visible:
@@ -2279,22 +2761,26 @@ class ModernPortalWindow(QWidget):
             f"**Reply from {user}@{host}**\n{text[:1500]}",), daemon=True).start()
 
     def _send_reminder(self):
-        if self.paused or self.user_closed_once:
+        if self.paused or self.user_closed_once or self._dormant:
             return
         _post_to_discord(
-            f"**Reminder**\nPortal `{SESSION_ID}` is still open and listening.\n"
+            f"**Reminder**\nRift `{SESSION_ID}` is still open and listening.\n"
             f"Folder: `{self.portal_folder}`")
 
     def _receive_atlas_message(self, text, speak=False):
         if not self.paused:
             self._set_status("Message from Atlas...", self._active_color)
+        # Fast pink flash and sound on every message received
+        self.orb.flash_alert()
+        if not self.muted:
+            threading.Thread(target=_play_message_sound, daemon=True).start()
         self.chat.add_message("Atlas", text, is_atlas=True)
         if not self.chat_visible:
             self._show_chat()
         if speak and not self.muted:
             threading.Thread(target=_speak_text, args=(text,), daemon=True).start()
         if not self.paused:
-            QTimer.singleShot(2000, lambda: self._set_status("Portal idle", self._idle_color))
+            QTimer.singleShot(2000, lambda: self._set_status("Rift idle", self._idle_color))
 
     def _execute_command(self, cmd):
         cmd_type = cmd.get("type", "")
@@ -2305,38 +2791,38 @@ class ModernPortalWindow(QWidget):
             self.paused = True
             self.orb.set_paused(True)
             self._poll_worker.set_paused(True)
-            self._set_status("Portal paused", PALETTE["warning"])
-            return True, "Portal paused"
+            self._set_status("Rift paused", PALETTE["warning"])
+            return True, "Rift paused"
 
         if cmd_type == "resume_portal":
             self.paused = False
             self.orb.set_paused(False)
             self._poll_worker.set_paused(False)
-            self._set_status("Portal resumed", PALETTE["success"])
-            return True, "Portal resumed"
+            self._set_status("Rift resumed", PALETTE["success"])
+            return True, "Rift resumed"
 
         if cmd_type == "test_pulse":
             self.orb.set_state("test_pulse")
             self._set_status("Responsiveness test running", PALETTE["error"])
-            _post_to_discord(f"[Portal @ {user}@{host}] Test pulse started.")
+            _post_to_discord(f"[Rift @ {user}@{host}] Test pulse started.")
             return True, "Test pulse started"
 
         if cmd_type == "stop_test_pulse":
             self.orb.set_state("idle" if not self.paused else "paused")
             self._set_status("Test pulse stopped", PALETTE["success"])
-            _post_to_discord(f"[Portal @ {user}@{host}] Test pulse stopped.")
+            _post_to_discord(f"[Rift @ {user}@{host}] Test pulse stopped.")
             return True, "Test pulse stopped"
 
         if cmd_type == "feedme":
             self.orb.set_state("feedme")
             self._set_status("Drop files here", PALETTE["success"])
-            _post_to_discord(f"[Portal @ {user}@{host}] Feed-me mode active.")
+            _post_to_discord(f"[Rift @ {user}@{host}] Feed-me mode active.")
             return True, "Feed-me mode active"
 
         if cmd_type == "stop_feedme":
             self.orb.set_state("idle" if not self.paused else "paused")
             self._set_status("Drop mode ended", PALETTE["success"])
-            _post_to_discord(f"[Portal @ {user}@{host}] Feed-me mode ended.")
+            _post_to_discord(f"[Rift @ {user}@{host}] Feed-me mode ended.")
             return True, "Feed-me mode ended"
 
         if cmd_type in ("message", "speak"):
@@ -2440,10 +2926,16 @@ class ModernPortalWindow(QWidget):
         if cmd_type == "portal_open":
             # Don't override the portal opening animation — let it play
             _mark_portal_opened()
-            return True, "Portal opened"
+            return True, "Rift opened"
 
         if cmd_type == "screenshot":
+            was_visible = self.isVisible()
+            was_minimized = self.isMinimized()
             try:
+                # Hide the portal briefly so it doesn't capture itself.
+                # Visibility/minimized state is restored in finally, guaranteed.
+                self.hide()
+                QApplication.processEvents()
                 screen = QApplication.primaryScreen()
                 pixmap = screen.grabWindow(0)
                 # QPixmap.save needs a QIODevice, not a Python BytesIO — use a QBuffer.
@@ -2456,6 +2948,13 @@ class ModernPortalWindow(QWidget):
                 return True, {"image": b64}
             except Exception as e:
                 return False, f"Screenshot failed: {e}"
+            finally:
+                if was_visible:
+                    self.show()
+                    if was_minimized:
+                        self.showMinimized()
+                    self.raise_()
+                    self.activateWindow()
 
         if cmd_type == "terminal":
             command_text = cmd.get("command", "").strip()
@@ -2474,7 +2973,7 @@ class ModernPortalWindow(QWidget):
 
         if cmd_type == "force_close":
             self._force_close()
-            return True, "Closing portal"
+            return True, "Closing Rift"
 
         # ---- .rift commands — interpreted directly by the portal ----
         if cmd_type == "rift_command":
@@ -2606,7 +3105,10 @@ class ModernPortalWindow(QWidget):
 
     def _on_close_clicked(self):
         if not self.user_closed_once:
-            self._user_close()
+            dialog = RiftCloseConfirmDialog(self)
+            dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self._user_close()
         else:
             self._final_user_close()
 
@@ -2620,12 +3122,13 @@ class ModernPortalWindow(QWidget):
         user = _get_user()
         host = platform.node() or "unknown"
         _post_to_discord(
-            f"**User closed the portal (background mode)**\n"
-            f"[Portal @ {user}@{host}]\n"
+            f"**User closed the Rift (background mode)**\n"
+            f"[Rift @ {user}@{host}]\n"
             f"Session: `{SESSION_ID}`\n"
             f"Atlas can use `/resurrect` to reopen it or `/close` to end the session.\n"
-            f"Closing again will permanently delete the portal.")
+            f"Closing again will permanently delete the Rift.")
         self.hide()
+        self._set_always_on_top(False)
 
     def _final_user_close(self):
         try:
@@ -2635,8 +3138,8 @@ class ModernPortalWindow(QWidget):
         user = _get_user()
         host = platform.node() or "unknown"
         _post_to_discord(
-            f"**User permanently closed the portal**\n"
-            f"[Portal @ {user}@{host}]\n"
+            f"**User permanently closed the Rift**\n"
+            f"[Rift @ {user}@{host}]\n"
             f"Session: `{SESSION_ID}`")
         self.destroy()
         try:
@@ -2652,19 +3155,98 @@ class ModernPortalWindow(QWidget):
             pass
 
     def _force_close(self):
-        """Close the portal window and mark the session closed.
+        """Handle the admin closing the session.
 
-        NOTE: This intentionally does NOT delete the portal file. The previous
-        behaviour of self-destructing made local testing dangerous because a
-        single accidental "Close Session" click in the admin console would
-        permanently delete the portal.
+        The portal shows a dialog with 'Go Dormant' and 'Close Also'. Going
+        dormant puts the portal to sleep with a persistent 'Reopen Rift' button.
+        Reopening starts a 5-minute reconnect window where the portal polls Firebase
+        once per minute, waiting for the admin to actually click Open Rift.
+        This avoids burning Firebase quota while still allowing recovery.
         """
         try:
             _mark_session_closed()
         except Exception:
             pass
-        self._running = False
-        self.close()
+        self._dormant = True
+        self._reconnect_window = False
+        self._reconnect_timer.stop()
+        self._set_status("Rift closing...", PALETTE["muted"])
+        self.orb.set_state("portal_closing")
+        self.chat_btn.setVisible(False)
+        self.reopen_btn.setVisible(False)
+        if self.chat_visible:
+            self._hide_chat()
+        QTimer.singleShot(3000, self._show_agent_closed_dialog)
+
+    def _enter_dormant(self):
+        """Put the portal into a low-polling dormant state after agent close."""
+        self._dormant = True
+        self._reconnect_window = False
+        self._reconnect_timer.stop()
+        self.orb.set_state("awaiting")
+        self._set_status("Rift dormant — click Reopen Rift to reconnect", PALETTE["muted"])
+        if self.chat_visible:
+            self._hide_chat()
+        self.chat_btn.setVisible(False)
+        self.reopen_btn.setVisible(True)
+
+    def _start_reconnect_window(self):
+        """User clicked Reopen Rift: poll for 5 minutes, once per minute, for an admin Open Rift."""
+        self._dormant = True
+        self._reconnect_window = True
+        self._poll_now = True
+        self._reconnect_timer.start(5 * 60 * 1000)  # 5 minutes
+        self.orb.set_state("portal_opening")
+        self._set_status("Reconnecting... waiting for Rift Agent", PALETTE["active"])
+        self.reopen_btn.setVisible(False)
+
+    def _on_reconnect_timeout(self):
+        """5-minute reconnect window expired without the admin engaging."""
+        self._enter_dormant()
+        dialog = RiftReopenConfirmDialog(self)
+        dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._start_reconnect_window()
+        else:
+            self._acknowledge_agent_close()
+
+    def _show_agent_closed_dialog(self):
+        dialog = RiftAgentClosedDialog(self)
+        dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Close Also chosen
+            self._acknowledge_agent_close()
+        else:
+            # Go Dormant chosen
+            self._enter_dormant()
+
+    def _on_reopen_rift(self):
+        """Reopen Rift button clicked from the dormant UI."""
+        dialog = RiftReopenConfirmDialog(self)
+        dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._start_reconnect_window()
+        else:
+            self._acknowledge_agent_close()
+
+    def _exit_dormant(self):
+        """Admin engaged (portal_open command) — resume normal operation."""
+        self._dormant = False
+        self._reconnect_window = False
+        self._reconnect_timer.stop()
+        self.chat_btn.setVisible(True)
+        self.reopen_btn.setVisible(False)
+
+    def _acknowledge_agent_close(self):
+        """User chose to close their Rift after the agent ended the session."""
+        self.user_closed_once = True
+        try:
+            _firebase_put(f"sessions/{SESSION_ID}/status", "user-closed")
+        except Exception:
+            pass
+        self.chat.hide()
+        self._set_always_on_top(False)
+        self.hide()
 
 
 # ------------------------------------------------------------------
@@ -2712,7 +3294,7 @@ def main():
             # Post the opening message to the default webhook first so the bot sees it,
             # then wait for a session-specific webhook assignment.
             _post_to_discord(
-                f"**Portal Opened**\n"
+                f"**Rift Opened**\n"
                 f"Session: `{SESSION_ID}`\n"
                 f"User: {user}@{host}\n"
                 f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
@@ -2728,7 +3310,7 @@ def main():
     def _heartbeat_loop():
         while getattr(window, "_running", True):
             try:
-                if getattr(window, "_registered", False):
+                if getattr(window, "_registered", False) and not getattr(window, "_dormant", False):
                     _update_last_seen()
             except Exception as e:
                 _portal_log(f"_heartbeat_loop error: {e}")

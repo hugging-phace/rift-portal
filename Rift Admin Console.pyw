@@ -5,6 +5,7 @@ Controls portal instances, sends commands, views screenshots, chats.
 Aesthetic: dark glass sidebar + black glass main area with techny accents.
 """
 
+import io
 import json
 import math
 import os
@@ -12,11 +13,12 @@ import random
 import sys
 import time
 import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QPointF, QSize, Signal, QElapsedTimer, QEvent
+    Qt, QTimer, QPoint, QPointF, QSize, QRectF, Signal, QElapsedTimer, QEvent
 )
 from PySide6.QtGui import (
     QPainter, QColor, QRadialGradient, QLinearGradient, QFont,
@@ -25,7 +27,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QTextEdit, QLineEdit, QFrame, QSizePolicy,
-    QGraphicsDropShadowEffect, QStackedWidget
+    QGraphicsDropShadowEffect, QStackedWidget, QDialog, QFileDialog
 )
 
 import uuid as _uuid
@@ -148,15 +150,16 @@ _DM_COLORS = [
 ]
 # State color overrides (r, g, b) — particles tint toward these
 _STATE_COLORS = {
-    "awaiting":       None,              # pure black — no connection yet
-    "portal_opening": None,              # pink+blue needle growing to idle
-    "idle":           None,              # violet palette
-    "command":        (40, 120, 220),    # blend of blues — deep sea blue
-    "terminal":       (140, 60, 220),    # purple — terminal command
-    "screenshot":     (220, 200, 40),    # yellow — screenshot in progress
-    "test_pulse":     (220, 30, 40),     # intense red
-    "paused":         (255, 180, 50),    # amber/yellow light
-    "feedme":         (40, 220, 100),    # green
+    "awaiting":        None,              # pure black — no connection yet
+    "portal_opening":  None,              # pink+blue needle growing to idle
+    "portal_closing":  None,              # violet shrinking back to dormant needle
+    "idle":            None,              # violet palette
+    "command":         (40, 120, 220),    # blend of blues — deep sea blue
+    "terminal":        (140, 60, 220),    # purple — terminal command
+    "screenshot":      (220, 200, 40),    # yellow — screenshot in progress
+    "test_pulse":      (220, 30, 40),     # intense red
+    "paused":          (255, 180, 50),    # amber/yellow light
+    "feedme":          (40, 220, 100),    # green
 }
 
 
@@ -391,9 +394,10 @@ class OrbWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
-        # Two independent phases for opposing motion
+        # Three independent phases for layered motion
         self._field_phase = random.random() * math.pi * 2   # outer dark field (CCW)
         self._edge_phase = random.random() * math.pi * 2     # magical edge (CW)
+        self._inner_phase = random.random() * math.pi * 2     # inner rift rotation
         self._state = "awaiting"  # starts with no connection
 
         # Smoothly interpolated state values
@@ -553,19 +557,25 @@ class OrbWidget(QWidget):
         # Vortex strength: builds up in feedme, decays otherwise
         self._vortex_strength = self._lerp(self._vortex_strength, self._target_vortex_strength, ease)
 
-        # Alert flash decays — fast, split-second flash
+        # Alert flash decays — fast, split-second flash that overpowers other glows
         if self._alert_flash > 0:
-            self._alert_flash = max(0, self._alert_flash - dt * 5.0)
+            self._alert_flash = max(0, self._alert_flash - dt * 8.0)
 
-        # Portal opening: progress grows from 0 to 1, then transitions to idle
+        # Portal opening/closing: progress grows/shrinks, then transitions
         if self._state == "portal_opening":
             self._portal_opening_progress = min(1.0, self._portal_opening_progress + dt * 0.4)
             if self._portal_opening_progress >= 1.0:
                 self.set_state("idle")
+        elif self._state == "portal_closing":
+            self._portal_opening_progress = max(0.0, self._portal_opening_progress - dt * 0.4)
+            if self._portal_opening_progress <= 0.0:
+                self.set_state("awaiting")
         else:
-            # Reset progress when not in portal_opening (so it can replay)
+            # Reset progress when not in portal_opening/closing (so it can replay)
             if self._state != "awaiting" and self._portal_opening_progress > 0:
                 self._portal_opening_progress = max(0, self._portal_opening_progress - dt * 2.0)
+            elif self._state == "awaiting":
+                self._portal_opening_progress = 0.0
 
         self._scale = self._lerp(self._scale, self._target_scale, ease)
         self._speed_mul = self._lerp(self._speed_mul, self._target_speed_mul, ease)
@@ -603,6 +613,9 @@ class OrbWidget(QWidget):
             edge_speed = 0.52 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost * active_boost
         self._field_phase -= dt * field_speed  # counter-clockwise
         self._edge_phase += dt * edge_speed    # clockwise
+        # Inner rift: clear but controlled rotation at the opening
+        inner_speed = 0.45 * self._speed_mul * (0.6 + breath * 0.4) * prox_boost * active_boost
+        self._inner_phase += dt * inner_speed
 
         if self._initialized:
             w, h = self.width(), self.height()
@@ -639,6 +652,16 @@ class OrbWidget(QWidget):
             self._target_tint = None
             self._target_tint_blend = 0.0
             # Don't reset progress here — it grows in _tick
+        elif state == "portal_closing":
+            # Needle point that shrinks — violet fading back to pink+blue, then gone
+            self._target_scale = 1.0
+            self._target_speed_mul = 0.8
+            self._target_glow = 0.0
+            self._target_edge_layers = 3
+            self._target_edge_intensity = 0.08
+            self._target_tint = None
+            self._target_tint_blend = 0.0
+            # Don't reset progress here — it shrinks in _tick
         elif state == "idle":
             self._target_scale = 1.0
             self._target_speed_mul = 1.0
@@ -726,6 +749,11 @@ class OrbWidget(QWidget):
         self._portal_opening_progress = 0.0
         self.set_state("portal_opening")
 
+    def start_portal_closing(self):
+        """Begin the portal closing animation — active portal shrinks back to dormant."""
+        self._portal_opening_progress = 1.0
+        self.set_state("portal_closing")
+
     def set_paused(self, paused):
         if paused:
             self.set_state("paused")
@@ -801,13 +829,13 @@ class OrbWidget(QWidget):
         # Awaiting: orb shrinks to near nothing — empty space
         if self._state == "awaiting":
             base_r *= 0.02
-        # Portal opening: needle point grows from 0.02 to 1.0
-        if self._state == "portal_opening":
+        # Portal opening/closing: needle point grows/shrinks between 0.02 and 1.0
+        if self._state in ("portal_opening", "portal_closing"):
             prog = self._portal_opening_progress
             base_r *= 0.02 + 0.98 * prog
         # Gentle whole-portal breathing — very subtle, makes it feel alive
         # Only in idle and colored states (not paused/pulse which have their own size behavior)
-        if self._state not in ("paused", "test_pulse", "awaiting", "portal_opening"):
+        if self._state not in ("paused", "test_pulse", "awaiting", "portal_opening", "portal_closing"):
             breath_scale = 1.0 + 0.03 * math.sin(self._breath_phase * 0.6)
             base_r *= breath_scale
 
@@ -829,6 +857,40 @@ class OrbWidget(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(center_grad))
         painter.drawEllipse(QPointF(cx, cy), base_r * 0.7, base_r * 0.7)
+
+        # ---- 1b. Inner rift rotation — slow, visible arcs at the opening ----
+        if self._state != "awaiting":
+            num_inner_arcs = 4
+            inner_base_r = base_r * 0.40
+            for i in range(num_inner_arcs):
+                arc_r = inner_base_r * (0.85 + 0.15 * math.sin(self._pulse_phase * 0.7 + i * 1.3))
+                arc_phase = self._inner_phase + i * (2 * math.pi / num_inner_arcs)
+                arc_path = QPainterPath()
+                steps = 16
+                for j in range(steps + 1):
+                    t = j / steps
+                    a = arc_phase + t * (math.pi * 0.6)
+                    px = cx + math.cos(a) * arc_r
+                    py = cy + math.sin(a) * arc_r
+                    if j == 0:
+                        arc_path.moveTo(px, py)
+                    else:
+                        arc_path.lineTo(px, py)
+                if tint and self._tint_blend > 0.01:
+                    tr, tg, tb = tint
+                    blend = self._tint_blend * 0.45
+                    ir = int(45 * (1 - blend) + tr * blend)
+                    ig = int(22 * (1 - blend) + tg * blend)
+                    ib = int(62 * (1 - blend) + tb * blend)
+                else:
+                    ir, ig, ib = 45, 22, 62
+                arc_alpha = int(28 + 18 * math.sin(self._pulse_phase * 1.8 + i))
+                pen = QPen(QColor(ir, ig, ib, arc_alpha))
+                pen.setWidthF(1.1 + 0.35 * (i % 2))
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(arc_path)
 
         # ---- 2. Drifting dark particles (skip in awaiting state) ----
         if self._state != "awaiting":
@@ -943,8 +1005,8 @@ class OrbWidget(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(blob)
 
-        # ---- 5. Portal opening: needle point grows, pink+blue fading to violet ----
-        if self._state == "portal_opening":
+        # ---- 5. Portal opening/closing: needle point grows/shrinks, pink+blue fading to violet ----
+        if self._state in ("portal_opening", "portal_closing"):
             prog = self._portal_opening_progress  # 0..1
             # Color shifts from pink+blue to violet as it grows
             # Pink (255, 80, 200) + Blue (40, 120, 220) → Violet (90, 45, 110)
@@ -1065,27 +1127,38 @@ class OrbWidget(QWidget):
             af = self._alert_flash  # 0..1, decays fast
             # Big ring flash — expands from center, contained within base_r
             # Ring radius grows quickly then fades
-            ring_r = base_r * (0.3 + 0.55 * (1.0 - af))  # expands as it fades
+            ring_r = base_r * (0.25 + 0.65 * (1.0 - af))  # expands as it fades
             ring_blob = self._blob_path(cx, cy, ring_r, self._edge_phase,
-                                        seed=7.0, intensity=0.10 + 0.06 * af)
-            # Bright pink ring — feathered edges
+                                        seed=7.0, intensity=0.10 + 0.08 * af)
+            # Bright pink ring — feathered edges, overpowering other glows
             ring_grad = QRadialGradient(cx, cy, ring_r)
             ring_grad.setColorAt(0, QColor(255, 80, 200, 0))
-            ring_grad.setColorAt(0.85, QColor(255, 80, 200, int(40 * af)))
-            ring_grad.setColorAt(0.93, QColor(255, 100, 210, int(180 * af)))
-            ring_grad.setColorAt(0.98, QColor(255, 80, 200, int(100 * af)))
+            ring_grad.setColorAt(0.82, QColor(255, 80, 200, int(60 * af)))
+            ring_grad.setColorAt(0.90, QColor(255, 100, 215, int(230 * af)))
+            ring_grad.setColorAt(0.97, QColor(255, 90, 205, int(140 * af)))
             ring_grad.setColorAt(1, QColor(220, 60, 180, 0))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(ring_grad))
             painter.drawPath(ring_blob)
 
+            # Bright core flash — brief hot center burst
+            core_flash_r = base_r * (0.45 + 0.25 * (1.0 - af))
+            core_flash_blob = self._blob_path(cx, cy, core_flash_r, self._field_phase,
+                                              seed=9.0, intensity=0.06 + 0.08 * af)
+            core_flash_grad = QRadialGradient(cx, cy, core_flash_r)
+            core_flash_grad.setColorAt(0, QColor(255, 120, 220, int(90 * af)))
+            core_flash_grad.setColorAt(0.4, QColor(255, 80, 200, int(40 * af)))
+            core_flash_grad.setColorAt(1, QColor(255, 60, 180, 0))
+            painter.setBrush(QBrush(core_flash_grad))
+            painter.drawPath(core_flash_blob)
+
             # Faded glow behind the ring
-            glow_r = base_r * 0.7
+            glow_r = base_r * 0.75
             glow_blob = self._blob_path(cx, cy, glow_r, self._field_phase,
                                         seed=8.0, intensity=0.08)
             glow_grad = QRadialGradient(cx, cy, glow_r)
-            glow_grad.setColorAt(0, QColor(255, 80, 200, int(25 * af)))
-            glow_grad.setColorAt(0.5, QColor(220, 60, 180, int(15 * af)))
+            glow_grad.setColorAt(0, QColor(255, 80, 200, int(45 * af)))
+            glow_grad.setColorAt(0.5, QColor(220, 60, 180, int(25 * af)))
             glow_grad.setColorAt(1, QColor(180, 40, 140, 0))
             painter.setBrush(QBrush(glow_grad))
             painter.drawPath(glow_blob)
@@ -1781,6 +1854,8 @@ class LogEntry(QFrame):
         msg_label.setFont(QFont(ADMIN_MONO, 8))
         msg_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
         msg_label.setWordWrap(True)
+        msg_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
 
         layout.addWidget(time_label)
         layout.addWidget(type_label)
@@ -1804,8 +1879,11 @@ class Session:
         self.created = datetime.now()
         self.last_active = datetime.now()
         self.orb_state = "idle"
-        self.chat = []       # list of (sender, text, timestamp)
-        self.results = []    # list of dicts: {type, title, content, timestamp, collapsed}
+        self.chat = []              # list of (sender, text, timestamp)
+        self.results = []           # list of dicts: {type, title, content, timestamp, collapsed}
+        self._seen_chat_ids = set()
+        self._seen_result_ids = set()
+        self._close_alert_added = False
         self.opened_at = ""
         self.last_seen = ""
         self.card_state = "inactive"
@@ -1923,6 +2001,466 @@ class PortalOpeningWidget(QWidget):
 # ------------------------------------------------------------------
 # Collapsible output box — for long text results
 # ------------------------------------------------------------------
+class ResultPopoutDialog(QDialog):
+    """Simple read-only popout window for long command output."""
+
+    def __init__(self, title, content, parent=None):
+        super().__init__(parent, Qt.WindowType.WindowCloseButtonHint)
+        self.setWindowTitle(title)
+        self.resize(720, 520)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        text = QTextEdit()
+        text.setPlainText(content)
+        text.setReadOnly(True)
+        text.setFont(QFont(ADMIN_MONO, 9))
+        text.setStyleSheet(f"""
+            QTextEdit {{
+                background: {PALETTE['chat_bg']};
+                color: {PALETTE['text']};
+                border: 1px solid rgba(255, 255, 255, 20);
+                border-radius: 6px;
+                padding: 6px;
+            }}
+        """)
+        layout.addWidget(text)
+
+
+class ZoomImageViewer(QWidget):
+    """Image viewer: fit-to-window, click toggles zoom, click-and-drag pans."""
+
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent)
+        self._pixmap = pixmap
+        self._scale = 1.0
+        self._offset = QPointF(0, 0)
+        self._zoomed = False
+        self._dragging = False
+        self._may_be_click = False
+        self._drag_start = QPointF()
+        self._offset_at_drag_start = QPointF()
+        self.setMinimumSize(300, 200)
+        self.setMouseTracking(True)
+        self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        self.setStyleSheet("background: #0b0b14;")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Defer fitting until the widget has its final geometry.
+        QTimer.singleShot(0, self._fit_to_window)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._zoomed:
+            self._fit_to_window()
+
+    def _fit_to_window(self):
+        if self._pixmap.isNull() or self._pixmap.width() == 0 or self._pixmap.height() == 0:
+            self._scale = 1.0
+            self._offset = QPointF(0, 0)
+            self._zoomed = False
+            self.update()
+            return
+        w = self.width()
+        h = self.height()
+        if w <= 0 or h <= 0:
+            return
+        sw = w / self._pixmap.width()
+        sh = h / self._pixmap.height()
+        self._scale = min(sw, sh, 1.0)
+        self._offset = QPointF(0, 0)
+        self._zoomed = False
+        self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        self.update()
+
+    def _zoom_step(self, factor):
+        """Zoom by a factor around the center of the view, keeping the image centered."""
+        if self._pixmap.isNull() or self._pixmap.width() == 0 or self._pixmap.height() == 0:
+            return
+        old_scale = self._scale
+        new_scale = max(0.1, min(10.0, old_scale * factor))
+        # Scale the existing offset so the image stays where it is relative to center
+        ratio = new_scale / old_scale
+        self._offset = self._offset * ratio
+        self._scale = new_scale
+        self._zoomed = (abs(new_scale - self._fit_scale()) > 0.01)
+        self.update()
+
+    def _fit_scale(self):
+        if self._pixmap.isNull() or self._pixmap.width() == 0 or self._pixmap.height() == 0:
+            return 1.0
+        return min(1.0, self.width() / self._pixmap.width(), self.height() / self._pixmap.height())
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#0b0b14"))
+        if self._pixmap.isNull():
+            return
+        w = self._pixmap.width() * self._scale
+        h = self._pixmap.height() * self._scale
+        x = (self.width() - w) / 2 + self._offset.x()
+        y = (self.height() - h) / 2 + self._offset.y()
+        painter.drawPixmap(QRectF(x, y, w, h), self._pixmap,
+                           QRectF(0, 0, self._pixmap.width(), self._pixmap.height()))
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        factor = 1.15 if delta > 0 else 1 / 1.15
+        self._zoom_step(factor)
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.position()
+            self._offset_at_drag_start = QPointF(self._offset)
+            self._may_be_click = True
+            self._dragging = False
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            pos = event.position()
+            if self._may_be_click and (pos - self._drag_start).manhattanLength() > 4:
+                self._may_be_click = False
+                self._dragging = True
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            if self._dragging:
+                self._offset = self._offset_at_drag_start + (pos - self._drag_start)
+                self.update()
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = False
+            self._may_be_click = False
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+            event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        self._fit_to_window()
+        event.accept()
+
+
+class ImagePopoutDialog(QDialog):
+    """Enlarged popout window for screenshots with zoom/pan support."""
+
+    MAX_W = 1000
+    MAX_H = 700
+    MIN_W = 500
+    MIN_H = 350
+    PAD = 40
+
+    def __init__(self, pixmap, title, parent=None):
+        super().__init__(parent, Qt.WindowType.WindowCloseButtonHint)
+        self.setWindowTitle(title)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        viewer = ZoomImageViewer(pixmap)
+        layout.addWidget(viewer)
+        self._size_to_image(pixmap)
+
+    def _size_to_image(self, pixmap):
+        if pixmap.isNull() or pixmap.width() == 0 or pixmap.height() == 0:
+            self.resize(self.MIN_W, self.MIN_H)
+            return
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        scale = min(1.0, (self.MAX_W - self.PAD) / img_w, (self.MAX_H - self.PAD) / img_h)
+        w = max(self.MIN_W, int(img_w * scale) + self.PAD)
+        h = max(self.MIN_H, int(img_h * scale) + self.PAD)
+        self.resize(w, h)
+
+
+class ZipDownloadBox(BlackGlassPanel):
+    """Alert box shown when a session is closed, offering a zip of all shared files/screenshots."""
+
+    def __init__(self, session, parent=None):
+        super().__init__(parent, radius=8, border_color=(220, 60, 60, 50))
+        self._session = session
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+
+        header = QLabel("  !  User closed this Rift")
+        header.setFont(QFont(ADMIN_MONO, 9, QFont.Weight.Bold))
+        header.setStyleSheet(f"color: {PALETTE['error']}; background: transparent; border: none;")
+        layout.addWidget(header)
+
+        msg = QLabel("Save any important documents before closing this session or exiting.")
+        msg.setFont(QFont(ADMIN_MONO, 8))
+        msg.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+
+        download_btn = QPushButton("Download Zip")
+        download_btn.setFixedHeight(30)
+        download_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        download_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        download_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(220, 60, 60, 25);
+                color: {PALETTE['error']};
+                border: 1px solid rgba(220, 60, 60, 60);
+                border-radius: 4px;
+                padding: 0 14px;
+            }}
+            QPushButton:hover {{ background: rgba(220, 60, 60, 45); }}
+        """)
+        download_btn.clicked.connect(self._download_zip)
+        layout.addWidget(download_btn)
+
+    def _download_zip(self):
+        try:
+            files = []  # list of (filename, bytes)
+            screenshot_idx = 0
+            for r in self._session.results:
+                if r["type"] in ("file", "file_drop"):
+                    payload = r.get("content", {})
+                    if isinstance(payload, dict):
+                        path = payload.get("file", "")
+                        data = payload.get("data", "")
+                        if data:
+                            name = Path(path).name or f"file_{len(files) + 1}"
+                            files.append((name, _b64.b64decode(data)))
+                elif r["type"] == "files":
+                    payload = r.get("content", {})
+                    if isinstance(payload, dict):
+                        for rel, b64_data in payload.get("files", {}).items():
+                            if b64_data:
+                                files.append((rel, _b64.b64decode(b64_data)))
+                elif r["type"] == "screenshot" and isinstance(r.get("content"), str) and r["content"] != "Received":
+                    screenshot_idx += 1
+                    files.append((f"screenshot_{screenshot_idx}.png", _b64.b64decode(r["content"])))
+
+            if not files:
+                return
+
+            default_name = f"rift_{self._session.id}_files.zip"
+            path, _ = QFileDialog.getSaveFileName(self, "Save Zip", default_name, "Zip files (*.zip)")
+            if not path:
+                return
+
+            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for name, data in files:
+                    zf.writestr(name, data)
+        except Exception:
+            pass
+
+
+class RiftConfirmDialog(QDialog):
+    """On-theme confirmation dialog with a title, message, and two buttons."""
+
+    def __init__(self, title, message, confirm_text="Yes", cancel_text="Cancel", danger=False, parent=None):
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(420, 200)
+        self._confirmed = False
+
+        container = QFrame(self)
+        container.setGeometry(0, 0, 420, 200)
+        container.setStyleSheet(f"""
+            QFrame {{
+                background-color: rgba(18, 17, 30, 245);
+                border: 1px solid rgba(154, 89, 182, 50);
+                border-radius: 16px;
+            }}
+        """)
+
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        title_lbl = QLabel(title)
+        title_lbl.setFont(QFont(ADMIN_MONO, 11, QFont.Weight.Bold))
+        title_lbl.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_lbl)
+
+        msg_lbl = QLabel(message)
+        msg_lbl.setFont(QFont(ADMIN_MONO, 9))
+        msg_lbl.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(msg_lbl, 1)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        cancel_btn = QPushButton(cancel_text)
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        cancel_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255, 255, 255, 12);
+                color: {PALETTE['muted']};
+                border: 1px solid rgba(255, 255, 255, 25);
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{ background: rgba(255, 255, 255, 22); color: {PALETTE['text']}; }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+
+        confirm_btn = QPushButton(confirm_text)
+        confirm_btn.setFixedHeight(32)
+        confirm_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        confirm_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        if danger:
+            confirm_btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(220, 60, 60, 35);
+                    color: #ff8a8a;
+                    border: 1px solid rgba(220, 60, 60, 60);
+                    border-radius: 6px;
+                }
+                QPushButton:hover { background: rgba(220, 60, 60, 55); }
+            """)
+        else:
+            confirm_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(154, 89, 182, 35);
+                    color: {PALETTE['accent_bright']};
+                    border: 1px solid rgba(154, 89, 182, 60);
+                    border-radius: 6px;
+                }}
+                QPushButton:hover {{ background: rgba(154, 89, 182, 55); }}
+            """)
+        confirm_btn.clicked.connect(self.accept)
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(confirm_btn)
+        layout.addLayout(btn_layout)
+
+        self._drag_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        event.accept()
+
+
+class FileResultBox(BlackGlassPanel):
+    """Box showing a downloadable file result."""
+
+    def __init__(self, title, file_name, file_data_b64, parent=None):
+        super().__init__(parent, radius=8, border_color=(40, 220, 100, 40))
+        self._file_name = file_name
+        self._file_data_b64 = file_data_b64
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        header = QLabel(f"  v  {title}")
+        header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        header.setStyleSheet(f"color: #28dc64; background: transparent; border: none;")
+        layout.addWidget(header)
+
+        file_row = QHBoxLayout()
+        file_row.setSpacing(8)
+        name_label = QLabel(file_name)
+        name_label.setFont(QFont(ADMIN_MONO, 8))
+        name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        name_label.setWordWrap(True)
+        file_row.addWidget(name_label, 1)
+
+        download_btn = QPushButton("Download")
+        download_btn.setFixedHeight(26)
+        download_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        download_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        download_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(40, 220, 100, 25);
+                color: #28dc64;
+                border: 1px solid rgba(40, 220, 100, 60);
+                border-radius: 4px;
+                padding: 0 10px;
+            }}
+            QPushButton:hover {{ background: rgba(40, 220, 100, 45); }}
+        """)
+        download_btn.clicked.connect(self._download)
+        file_row.addWidget(download_btn)
+        layout.addLayout(file_row)
+
+    def _download(self):
+        try:
+            path, _ = QFileDialog.getSaveFileName(self, "Save File", self._file_name)
+            if not path:
+                return
+            data = _b64.b64decode(self._file_data_b64)
+            Path(path).write_bytes(data)
+        except Exception as e:
+            pass
+
+
+class FilesResultBox(BlackGlassPanel):
+    """Box showing multiple downloadable file results."""
+
+    def __init__(self, title, files_dict, parent=None):
+        super().__init__(parent, radius=8, border_color=(40, 220, 100, 40))
+        self._files_dict = files_dict
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        header = QLabel(f"  v  {title}")
+        header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        header.setStyleSheet(f"color: #28dc64; background: transparent; border: none;")
+        layout.addWidget(header)
+
+        for file_name, file_data_b64 in files_dict.items():
+            file_row = QHBoxLayout()
+            file_row.setSpacing(8)
+            name_label = QLabel(file_name)
+            name_label.setFont(QFont(ADMIN_MONO, 8))
+            name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+            name_label.setWordWrap(True)
+            file_row.addWidget(name_label, 1)
+
+            download_btn = QPushButton("Download")
+            download_btn.setFixedHeight(24)
+            download_btn.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
+            download_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            download_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(40, 220, 100, 25);
+                    color: #28dc64;
+                    border: 1px solid rgba(40, 220, 100, 60);
+                    border-radius: 4px;
+                    padding: 0 8px;
+                }}
+                QPushButton:hover {{ background: rgba(40, 220, 100, 45); }}
+            """)
+            download_btn.clicked.connect(lambda checked, fn=file_name, fd=file_data_b64: self._download(fn, fd))
+            file_row.addWidget(download_btn)
+            layout.addLayout(file_row)
+
+    def _download(self, file_name, file_data_b64):
+        try:
+            path, _ = QFileDialog.getSaveFileName(self, "Save File", file_name)
+            if not path:
+                return
+            data = _b64.b64decode(file_data_b64)
+            Path(path).write_bytes(data)
+        except Exception:
+            pass
+
+
 class CollapsibleBox(BlackGlassPanel):
     """A collapsible box for command outputs, file contents, etc."""
 
@@ -1939,15 +2477,22 @@ class CollapsibleBox(BlackGlassPanel):
         self._collapsed = True
         self._content = content
         self._title = title
+        self._color = color
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(4)
 
-        # Header row — click to toggle
-        header = QPushButton(f"  >  {title}")
-        header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"""
+        # Header row — toggle arrow + title + popout button
+        header = QWidget()
+        header.setStyleSheet("background: transparent; border: none;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+
+        title_btn = QPushButton(f"  >  {title}")
+        title_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        title_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 color: {color};
@@ -1957,9 +2502,28 @@ class CollapsibleBox(BlackGlassPanel):
             }}
             QPushButton:hover {{ color: {PALETTE['accent_bright']}; }}
         """)
-        header.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        header.clicked.connect(self._toggle)
-        self._header = header
+        title_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        title_btn.clicked.connect(self._toggle)
+        self._header = title_btn
+        header_layout.addWidget(title_btn, 1)
+
+        popout_btn = QPushButton("↗")
+        popout_btn.setFixedSize(20, 20)
+        popout_btn.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
+        popout_btn.setToolTip("Open in popout")
+        popout_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {PALETTE['muted']};
+                border: 1px solid rgba(255, 255, 255, 25);
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{ color: {PALETTE['accent_bright']}; border: 1px solid rgba(255, 255, 255, 55); }}
+        """)
+        popout_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        popout_btn.clicked.connect(self._popout)
+        header_layout.addWidget(popout_btn)
+
         layout.addWidget(header)
 
         # Content area (hidden when collapsed)
@@ -1967,6 +2531,8 @@ class CollapsibleBox(BlackGlassPanel):
         self._content_label.setFont(QFont(ADMIN_MONO, 8))
         self._content_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
         self._content_label.setWordWrap(True)
+        self._content_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         self._content_label.setVisible(False)
         layout.addWidget(self._content_label)
 
@@ -1975,6 +2541,15 @@ class CollapsibleBox(BlackGlassPanel):
         self._content_label.setVisible(not self._collapsed)
         arrow = "v" if not self._collapsed else ">"
         self._header.setText(f"  {arrow}  {self._title}")
+
+    def _popout(self):
+        dialog = ResultPopoutDialog(self._title, self._content, self)
+        dialog.exec()
+
+    def mouseDoubleClickEvent(self, event):
+        # Double-clicking the whole box opens the popout
+        self._popout()
+        event.accept()
 
 
 # ------------------------------------------------------------------
@@ -2888,7 +3463,21 @@ class SessionDetailView(QWidget):
             self.close_session_requested.emit(self._session.id)
 
     def add_result(self, result_type, title, content):
-        box = CollapsibleBox(title, content, result_type)
+        if result_type in ("file", "file_drop"):
+            file_path = content.get("file", "") if isinstance(content, dict) else ""
+            file_name = Path(file_path).name or "file"
+            box = FileResultBox(title, file_name, content.get("data", "") if isinstance(content, dict) else "", self._results_container)
+        elif result_type == "files":
+            files = content.get("files", {}) if isinstance(content, dict) else {}
+            box = FilesResultBox(title, files, self._results_container)
+        else:
+            box = CollapsibleBox(title, content, result_type)
+        self._results_layout.insertWidget(self._results_layout.count() - 1, box)
+        QTimer.singleShot(10, lambda: self._results_scroll.verticalScrollBar().setValue(
+            self._results_scroll.verticalScrollBar().maximum()))
+
+    def add_close_alert(self, session):
+        box = ZipDownloadBox(session, self._results_container)
         self._results_layout.insertWidget(self._results_layout.count() - 1, box)
         QTimer.singleShot(10, lambda: self._results_scroll.verticalScrollBar().setValue(
             self._results_scroll.verticalScrollBar().maximum()))
@@ -2905,6 +3494,14 @@ class SessionDetailView(QWidget):
         img = QLabel()
         img.setPixmap(pixmap.scaled(400, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         img.setStyleSheet("background: transparent; border: none;")
+        img.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        img.setToolTip("Click to enlarge")
+
+        def _open_image_popout():
+            dialog = ImagePopoutDialog(pixmap, title, self)
+            dialog.exec()
+
+        img.mousePressEvent = lambda event: _open_image_popout()
         sl.addWidget(img)
         self._results_layout.insertWidget(self._results_layout.count() - 1, shot_widget)
         QTimer.singleShot(10, lambda: self._results_scroll.verticalScrollBar().setValue(
@@ -2938,6 +3535,8 @@ class SessionDetailView(QWidget):
         msg.setFont(QFont("Segoe UI", 9))
         msg.setStyleSheet(f"color: {color}; background: transparent; border: none;")
         msg.setWordWrap(True)
+        msg.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         bl.addWidget(sender)
         bl.addWidget(msg)
         self._chat_layout.insertWidget(self._chat_layout.count() - 1, bubble)
@@ -2960,7 +3559,17 @@ class SessionDetailView(QWidget):
                 item.widget().deleteLater()
         if self._session:
             for r in self._session.results:
-                self.add_result(r["type"], r["title"], r["content"])
+                if r["type"] == "screenshot" and isinstance(r["content"], str) and r["content"] != "Received":
+                    try:
+                        pm = QPixmap()
+                        pm.loadFromData(_b64.b64decode(r["content"]), "PNG")
+                        self.add_screenshot(pm, r["title"])
+                    except Exception:
+                        self.add_result("error", f"Screenshot load failed: {r['title']}", "")
+                elif r["type"] == "close_alert":
+                    self.add_close_alert(r["content"])
+                else:
+                    self.add_result(r["type"], r["title"], r["content"])
 
     def update_state(self, state):
         if self._session:
@@ -3966,6 +4575,8 @@ class ChatView(QWidget):
         msg.setFont(QFont("Segoe UI", 10))
         msg.setStyleSheet(f"color: {color}; background: transparent; border: none;")
         msg.setWordWrap(True)
+        msg.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
 
         bl.addWidget(sender)
         bl.addWidget(msg)
@@ -4195,6 +4806,12 @@ class RiftAdminConsole(QWidget):
         orb_layout.addWidget(self.orb, alignment=Qt.AlignmentFlag.AlignCenter)
         self._sidebar_layout.addWidget(orb_area, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Ambient dormant rift animation — occasional open/close when no active sessions
+        self._ambient_timer = QTimer(self)
+        self._ambient_timer.timeout.connect(self._ambient_rift_tick)
+        self._ambient_timer.setSingleShot(True)
+        self._ambient_opening = False
+
         self._orb_status = QLabel("IDLE")
         self._orb_status.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
         self._orb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -4308,10 +4925,21 @@ class RiftAdminConsole(QWidget):
         self._sessions = new_sessions
         self._session_list.set_sessions(self._sessions)
 
-        # Sidebar orb reflects overall connectivity: active if any session is
-        # connected, dormant (awaiting) otherwise.
-        any_connected = any(s.portal_connected for s in new_sessions)
-        self._set_orb_connected(any_connected)
+        # Sidebar orb reflects overall session state: active if any session is
+        # still active (open), even if stale or not yet connected. Only fall back
+        # to dormant when there are no active sessions at all.
+        has_active = any(s.status == "active" for s in new_sessions)
+        self._set_orb_connected(has_active)
+
+        # If a user closed their Rift, surface a persistent alert with a download-zip option
+        for s in new_sessions:
+            if s.status in ("user-closed", "closed") and not s._close_alert_added:
+                s._close_alert_added = True
+                self._add_session_close_alert(s)
+
+        # When dormant, occasionally play an ambient rift opening/closing animation.
+        if not has_active and not self._ambient_timer.isActive() and not self._ambient_opening:
+            self._schedule_ambient_rift()
 
         # If the current session's portal_connected state changed, refresh the detail view
         if self._current_session:
@@ -4329,11 +4957,26 @@ class RiftAdminConsole(QWidget):
                         self._current_session.portal_connected = s.portal_connected
                     break
 
+    def _add_session_close_alert(self, session):
+        """Persist an alert when the user closes their Rift, with a download-zip option."""
+        alert_text = "User closed this Rift. Save any important documents before closing this session or exiting."
+        session.chat.append(("system", alert_text, datetime.now()))
+        session.results.append({"type": "close_alert", "title": "Rift Closed", "content": session})
+        if self._current_session and self._current_session.id == session.id:
+            self._session_detail._refresh_chat()
+            self._session_detail.add_close_alert(session)
+
     def _on_result_received(self, session_id, result):
         """Called when a command result comes back from a portal client."""
         # Find the session
         for s in self._sessions:
             if s.id == session_id:
+                cmd_id = result.get("id", "")
+                # Deduplicate results when a session is rewatched
+                if cmd_id and cmd_id in s._seen_result_ids:
+                    break
+                if cmd_id:
+                    s._seen_result_ids.add(cmd_id)
                 cmd_type = result.get("type", "output")
                 ok = result.get("ok", True)
                 result_payload = result.get("result", "")
@@ -4348,12 +4991,28 @@ class RiftAdminConsole(QWidget):
                         png_bytes = _b64.b64decode(b64_data)
                         pm = QPixmap()
                         pm.loadFromData(png_bytes, "PNG")
+                        title = f"Screenshot - {datetime.now().strftime('%H:%M:%S')}"
                         if is_current:
-                            self._session_detail.add_screenshot(pm, f"Screenshot - {datetime.now().strftime('%H:%M:%S')}")
-                        s.results.append({"type": "screenshot", "title": "Screenshot", "content": "Received"})
+                            self._session_detail.add_screenshot(pm, title)
+                        s.results.append({"type": "screenshot", "title": title, "content": b64_data})
                     except Exception as e:
                         if is_current:
                             self._session_detail.add_result("error", "Screenshot decode failed", str(e))
+                elif isinstance(result_payload, dict) and ("file" in result_payload or "data" in result_payload):
+                    # Single file result (.fetch, drag-and-drop)
+                    file_path = result_payload.get("file", "")
+                    file_name = Path(file_path).name or "file"
+                    title = f"File: {file_name}"
+                    if is_current:
+                        self._session_detail.add_result("file_drop", title, result_payload)
+                    s.results.append({"type": "file_drop", "title": title, "content": result_payload})
+                elif isinstance(result_payload, dict) and "files" in result_payload:
+                    # Multiple file result (.fetchall)
+                    files_dict = result_payload.get("files", {})
+                    title = f"Files ({len(files_dict)})"
+                    if is_current:
+                        self._session_detail.add_result("files", title, result_payload)
+                    s.results.append({"type": "files", "title": title, "content": result_payload})
                 else:
                     # Non-image payloads: render dicts/lists as readable text
                     if isinstance(result_payload, (dict, list)):
@@ -4378,6 +5037,11 @@ class RiftAdminConsole(QWidget):
                     "⚠ Message failed to send (Firebase unreachable)", is_admin=False)
 
     def _switch_view(self, index):
+        current = self._stack.currentIndex()
+        # If we're leaving the session detail view, ask the admin to confirm first.
+        if current == 4 and index != 4 and self._current_session is not None:
+            if not self._confirm_leave_session():
+                return
         self._stack.setCurrentIndex(index)
         # Only highlight nav buttons for nav views (0, 1, 2, 3)
         for i, btn in enumerate(self._nav_buttons):
@@ -4416,7 +5080,34 @@ class RiftAdminConsole(QWidget):
                     self._firebase_worker.watch_chat(session_id)
                 return
 
+    def _confirm_leave_session(self):
+        """Ask the admin if they're sure they want to leave the current session."""
+        dialog = RiftConfirmDialog(
+            "Leave Session?",
+            "This session may contain unsaved files or screenshots. Leave without downloading?",
+            confirm_text="Leave",
+            cancel_text="Stay",
+            parent=self
+        )
+        dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _confirm_close_session(self):
+        """Ask the admin if they're sure they want to close/end the current session."""
+        dialog = RiftConfirmDialog(
+            "Close Session?",
+            "This will permanently end the current session for the user. Any unsaved files or screenshots may be lost.",
+            confirm_text="Close Session",
+            cancel_text="Stay",
+            danger=True,
+            parent=self
+        )
+        dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
     def _back_to_list(self):
+        if self._current_session and not self._confirm_leave_session():
+            return
         if self._current_session:
             self._firebase_worker.unwatch_results(self._current_session.id)
             self._firebase_worker.unwatch_chat(self._current_session.id)
@@ -4426,6 +5117,8 @@ class RiftAdminConsole(QWidget):
 
     def _close_session(self, session_id):
         """Close/end a session — sends force_close and returns to list."""
+        if self._current_session and not self._confirm_close_session():
+            return
         # Send force_close command to the portal
         send_command_to_session(session_id, "force_close")
         # Stop watching results
@@ -4640,6 +5333,8 @@ class RiftAdminConsole(QWidget):
         when the last connection drops we fall back to the dormant black portal.
         """
         if connected:
+            self._ambient_timer.stop()
+            self._ambient_opening = False
             if not self._orb_connected:
                 self._orb_connected = True
                 self.orb.start_portal_opening()
@@ -4648,17 +5343,55 @@ class RiftAdminConsole(QWidget):
                 self._orb_connected = False
                 self.orb.set_state("awaiting")
 
+    def _ambient_rift_tick(self):
+        """Dormant ambient effect: the rift occasionally opens and closes when no session is active."""
+        if self._orb_connected or self._ambient_opening:
+            return
+        self._ambient_opening = True
+        self._orb_status.setText("RIFT OPENING")
+        self.orb.start_portal_opening()
+        # Open animation (~2.5s), stay open (~2.5s), then reverse-close (~2.5s)
+        QTimer.singleShot(6000, self._ambient_rift_close)
+
+    def _ambient_rift_close(self):
+        """Finish the ambient open/close cycle and schedule the next one."""
+        if self._orb_connected:
+            self._ambient_opening = False
+            return
+        self._orb_status.setText("RIFT CLOSING")
+        self.orb.start_portal_closing()
+        QTimer.singleShot(3200, lambda: (
+            self._update_orb_state("awaiting"),
+            self._schedule_ambient_rift()
+        ))
+
+    def _schedule_ambient_rift(self):
+        """Schedule the next ambient open/close cycle if still dormant."""
+        self._ambient_opening = False
+        if self._orb_connected:
+            return
+        delay = random.randint(25000, 120000)  # 25s-2min of dormancy between displays
+        self._ambient_timer.start(delay)
+
     def _on_chat_received(self, session_id, msg):
         """Incoming chat message from the portal client."""
         text = msg.get("text", "")
         sender = msg.get("sender", "portal")
         msg_type = msg.get("type", "")
+        msg_id = msg.get("id", "")
         if not text:
             return
         # Find the session and add the message
         for s in self._sessions:
             if s.id == session_id:
+                # Deduplicate messages when a session is rewatched
+                if msg_id and msg_id in s._seen_chat_ids:
+                    break
+                if msg_id:
+                    s._seen_chat_ids.add(msg_id)
                 s.chat.append((sender, text, datetime.now()))
+                # Fast pink flash on every incoming message
+                self.orb.flash_alert()
                 if self._current_session and self._current_session.id == session_id:
                     self._session_detail._add_chat_bubble(text, is_admin=False)
                 break
@@ -4673,7 +5406,18 @@ class RiftAdminConsole(QWidget):
         self._session_list.update_uptime(elapsed)
 
     def closeEvent(self, event):
-        """Clean up background threads on close."""
+        """Confirm before closing, then clean up background threads."""
+        dialog = RiftConfirmDialog(
+            "Close Rift Admin Console?",
+            "Are you sure you want to close the admin console?",
+            confirm_text="Close",
+            cancel_text="Cancel",
+            parent=self
+        )
+        dialog.move(self.mapToGlobal(self.rect().center() - dialog.rect().center()))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            event.ignore()
+            return
         try:
             self._firebase_worker.stop()
             self._firebase_thread.quit()
@@ -4739,7 +5483,8 @@ class RiftAdminConsole(QWidget):
                 self._resize_edge = edges
                 self._resize_start_geo = self.geometry()
                 self._resize_start_mouse = event.globalPosition().toPoint()
-            else:
+            elif event.position().y() <= 60:
+                # Only allow dragging from the top bar area (sidebar header / content top)
                 self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
