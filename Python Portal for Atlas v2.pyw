@@ -2441,6 +2441,18 @@ class RiftReopenConfirmDialog(QDialog):
         event.accept()
 
 
+class StatusLabel(QLabel):
+    """Single-line status label that elides long text and shows the full message in a tooltip."""
+
+    def setText(self, text):
+        self._full_text = text or ""
+        width = self.width() if self.width() > 0 else 220
+        metrics = QFontMetrics(self.font())
+        elided = metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, width)
+        super().setText(elided)
+        self.setToolTip(self._full_text)
+
+
 class ModernPortalWindow(QWidget):
     def __init__(self, portal_folder, color_override=None):
         super().__init__()
@@ -2522,7 +2534,7 @@ class ModernPortalWindow(QWidget):
         layout.addSpacing(6)
         layout.addWidget(orb_area, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.status_label = QLabel("Awaiting Rift connection")
+        self.status_label = StatusLabel("Awaiting Rift connection")
         self.status_label.setFont(QFont("Segoe UI", 9))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setWordWrap(False)
