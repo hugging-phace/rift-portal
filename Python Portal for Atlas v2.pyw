@@ -608,6 +608,7 @@ _STATE_COLORS = {
     "test_pulse":      (220, 30, 40),     # intense red
     "paused":          (255, 180, 50),    # amber/yellow light
     "feedme":          (40, 220, 100),    # green
+    "vision":          (220, 80, 180),    # purple-pink — Vision eye
 }
 
 
@@ -839,6 +840,7 @@ class OrbWidget(QWidget):
     """
 
     state_changed = Signal(str)  # emitted when the orb state changes
+    clicked = Signal()            # emitted when the orb is clicked (Vision mode)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -879,6 +881,10 @@ class OrbWidget(QWidget):
         self._target_vortex_strength = 0.0
         self._alert_flash = 0.0
         self._portal_opening_progress = 0.0  # 0..1, grows during portal_opening
+
+        # Vision mode eye state
+        self._vision_open = 1.0          # 0..1, eyelid openness (1 = open)
+        self._vision_blink = 0.0         # blink timer
 
         # Mouse interaction state — all smoothly interpolated
         self._mouse_x = 0.0       # actual mouse position
@@ -943,6 +949,9 @@ class OrbWidget(QWidget):
                 "age": 0.0,
                 "max_age": 2.5,
             })
+            # In Vision mode, clicking the eye captures a screenshot.
+            if self._state == "vision":
+                self.clicked.emit()
 
     def _init_particles(self):
         w, h = self.width(), self.height()
@@ -996,6 +1005,23 @@ class OrbWidget(QWidget):
         else:
             fast_ease = 1.0 - math.exp(-dt * 15.0)
             self._pulse_breath = self._lerp(self._pulse_breath, 1.0, fast_ease)
+
+        # Vision mode: occasional blink and smooth eyelid movement
+        if self._state == "vision":
+            self._vision_blink += dt
+            # Blink every ~2.5 to 4.5 seconds
+            if self._vision_blink > 3.5 + math.sin(self._breath_phase * 0.5) * 0.5:
+                self._vision_blink = 0.0
+            # Eyelid opens quickly, closes quickly for the blink, then reopens
+            if self._vision_blink < 0.15:
+                target_open = 1.0
+            elif self._vision_blink < 0.35:
+                target_open = 0.15
+            else:
+                target_open = 1.0
+            self._vision_open = self._lerp(self._vision_open, target_open, 1.0 - math.exp(-dt * 20.0))
+        else:
+            self._vision_open = self._lerp(self._vision_open, 1.0, 1.0 - math.exp(-dt * 10.0))
 
         # Crack morph: inert (always targets 0, kept for compatibility)
         self._crack_morph = self._lerp(self._crack_morph, self._target_crack_morph, ease)
@@ -1162,20 +1188,38 @@ class OrbWidget(QWidget):
             self._target_tint = sc
             self._target_tint_blend = 0.6
             self._target_vortex_strength = 1.0
+        elif state == "vision":
+            self._target_scale = 1.0
+            self._target_speed_mul = 0.6
+            self._target_glow = 0.4
+            self._target_edge_layers = 4
+            self._target_edge_intensity = 0.08
+            self._target_tint = sc
+            self._target_tint_blend = 0.85
 
         self.state_changed.emit(state)
 
     def flash_command(self):
-        """Brief blue energy flash for regular commands."""
+        """Brief blue energy flash for regular commands.
+
+        Only restore the previous state if the portal is still in the command
+        flash state. This prevents the flash from overwriting a persistent mode
+        (e.g. paused/feedme) that was set while the flash was running."""
         previous = self._state
         self.set_state("command")
-        QTimer.singleShot(1200, lambda: self.set_state(previous if previous != "command" else "idle"))
+        def _restore():
+            if self._state == "command":
+                self.set_state(previous if previous != "command" else "idle")
+        QTimer.singleShot(1200, _restore)
 
     def flash_terminal(self):
         """Brief purple energy flash for terminal commands."""
         previous = self._state
         self.set_state("terminal")
-        QTimer.singleShot(1500, lambda: self.set_state(previous if previous != "terminal" else "idle"))
+        def _restore():
+            if self._state == "terminal":
+                self.set_state(previous if previous != "terminal" else "idle")
+        QTimer.singleShot(1500, _restore)
 
     def start_screenshot(self):
         """Yellow glow lingers while a screenshot is being taken/sent."""
@@ -1634,6 +1678,60 @@ class OrbWidget(QWidget):
                 pen2.setWidthF(4.0 * (1.0 - t * 0.5))
                 painter.setPen(pen2)
                 painter.drawEllipse(QPointF(r["x"], r["y"]), ripple_r * 1.3, ripple_r * 1.3)
+
+        # ---- Vision mode: vertical cat/dragon eye that follows the mouse ----
+        if self._state == "vision":
+            eye_col = tint if tint else (220, 80, 180)
+            er, eg, eb = eye_col
+            # Eye dimensions: vertical almond, larger in the centre
+            a = base_r * 0.55
+            b = base_r * 0.80
+            eye_path = QPainterPath()
+            eye_path.moveTo(-a, 0)
+            eye_path.cubicTo(-a, -b * 1.2, -a * 0.2, -b, 0, -b)
+            eye_path.cubicTo(a * 0.2, -b, a, -b * 1.2, a, 0)
+            eye_path.cubicTo(a, b * 1.2, a * 0.2, b, 0, b)
+            eye_path.cubicTo(-a * 0.2, b, -a, b * 1.2, -a, 0)
+
+            # The pupil/iris follows the mouse via the lean values
+            pupil_x = self._lean_x * base_r * 4.0
+            pupil_y = self._lean_y * base_r * 4.0
+
+            painter.save()
+            painter.translate(cx, cy)
+            # Blink scales the whole eye vertically
+            painter.scale(1.0, max(0.12, self._vision_open))
+
+            # Sclera glow
+            sclera_grad = QRadialGradient(0, 0, b)
+            sclera_grad.setColorAt(0, QColor(er, eg, eb, 100))
+            sclera_grad.setColorAt(0.5, QColor(er // 2, eg // 2, eb // 2, 60))
+            sclera_grad.setColorAt(1, QColor(0, 0, 0, 0))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(sclera_grad))
+            painter.drawPath(eye_path)
+
+            # Iris
+            iris_r = base_r * 0.32
+            iris_grad = QRadialGradient(pupil_x, pupil_y, iris_r)
+            iris_grad.setColorAt(0, QColor(min(255, er + 35), min(255, eg + 35), min(255, eb + 35), 160))
+            iris_grad.setColorAt(0.6, QColor(er, eg, eb, 100))
+            iris_grad.setColorAt(1, QColor(0, 0, 0, 0))
+            painter.setBrush(QBrush(iris_grad))
+            painter.drawEllipse(QPointF(pupil_x, pupil_y), iris_r, iris_r)
+
+            # Pupil (vertical slit)
+            painter.setBrush(QBrush(QColor(10, 5, 15, 230)))
+            painter.drawEllipse(QPointF(pupil_x, pupil_y), base_r * 0.12, base_r * 0.35)
+
+            # Eye outline (soft purple-pink stroke)
+            outline_pen = QPen(QColor(er, eg, eb, 90))
+            outline_pen.setWidthF(2.0)
+            painter.setPen(outline_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(eye_path)
+
+            painter.restore()
 
         painter.end()
 
@@ -2343,6 +2441,7 @@ class ModernPortalWindow(QWidget):
         self.orb.setFixedSize(160, 160)
         self.orb.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.orb.state_changed.connect(self._on_orb_state_changed)
+        self.orb.clicked.connect(self._on_vision_click)
         orb_layout.addWidget(self.orb, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout.addSpacing(6)
@@ -2449,6 +2548,7 @@ class ModernPortalWindow(QWidget):
         self._dormant = False
         self._reconnect_window = False
         self._poll_now = False
+        self._vision_last_click = 0  # used for double-click dedup in Vision mode
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setSingleShot(True)
         self._reconnect_timer.timeout.connect(self._on_reconnect_timeout)
@@ -2471,16 +2571,12 @@ class ModernPortalWindow(QWidget):
             self.orb.flash_terminal()
         elif cmd_type == "feedme":
             self.orb.set_state("feedme")
-        elif cmd_type == "stop_feedme":
-            self.orb.set_state("idle")
         elif cmd_type == "pause_portal":
             self.orb.set_paused(True)
         elif cmd_type == "resume_portal":
             self.orb.set_paused(False)
         elif cmd_type == "test_pulse":
             self.orb.set_state("test_pulse")
-        elif cmd_type == "stop_test_pulse":
-            self.orb.set_state("idle")
         elif cmd_type == "portal_open":
             self._exit_dormant()
             self.orb.start_portal_opening()
@@ -2493,12 +2589,25 @@ class ModernPortalWindow(QWidget):
         _portal_log(f"_on_new_command: ok={ok}, result={result}")
         if cmd_id:
             _write_command_result(cmd_id, cmd_type, ok, result)
+        # Screenshot yellow glow only lasts while the capture is in progress;
+        # once we have a result the portal returns to idle automatically.
+        if cmd_type == "screenshot" and ok:
+            self.orb.end_screenshot()
         color = PALETTE["success"] if ok else PALETTE["error"]
         self._set_status(result[:60], color)
-        if not self.paused:
+        # Persistent modes (paused, feedme, test_pulse, vision) should keep their
+        # status text instead of flipping back to "Rift idle" after a few seconds.
+        if not self.paused and self.orb._state not in ("paused", "feedme", "test_pulse", "vision"):
             QTimer.singleShot(2500, lambda: self._set_status("Rift idle", self._idle_color))
 
     def closeEvent(self, event):
+        # Route the first close request through the same confirmation flow as
+        # the X button, so window-manager closes also mark the session as
+        # user-closed. Final close (second close) is handled normally.
+        if not self.user_closed_once:
+            event.ignore()
+            self._on_close_clicked()
+            return
         try:
             self._poll_worker.stop()
             self._chat_worker.stop()
@@ -2715,6 +2824,36 @@ class ModernPortalWindow(QWidget):
     def _on_orb_state_changed(self, state):
         """Keep the window always-on-top only while in feedme mode."""
         self._set_always_on_top(state == "feedme")
+
+    def _on_vision_click(self):
+        """Capture and send a screenshot when the Vision eye is clicked.
+
+        Double-clicks within 500 ms are treated as a single click so the admin
+        doesn't get spammed. On macOS, QScreen capture may not work for the
+        desktop window; in that case we show a compatibility notice instead.
+        """
+        now = time.time()
+        if now - self._vision_last_click < 0.5:
+            return
+        self._vision_last_click = now
+
+        self._set_status("Capturing vision snapshot...", self._active_color)
+        self.orb.start_screenshot()
+        cmd_id = uuid.uuid4().hex
+        ok, result = self._execute_command({"type": "screenshot", "id": cmd_id})
+        if ok:
+            _write_command_result(cmd_id, "screenshot", True, result)
+            self.orb.end_screenshot()
+            self._set_status("Vision snapshot sent", PALETTE["success"])
+            return
+
+        self.orb.end_screenshot()
+        # If capture failed and we're on macOS, show a platform notice.
+        if platform.system() == "Darwin":
+            self._set_status("Not compatible with mac", PALETTE["error"])
+            _post_to_discord("[Vision] Desktop capture not supported on macOS.")
+        else:
+            self._set_status("Vision snapshot failed", PALETTE["error"])
 
     def _toggle_chat(self):
         if self.chat_visible:
@@ -2936,8 +3075,29 @@ class ModernPortalWindow(QWidget):
                 # Visibility/minimized state is restored in finally, guaranteed.
                 self.hide()
                 QApplication.processEvents()
-                screen = QApplication.primaryScreen()
-                pixmap = screen.grabWindow(0)
+                # macOS: Qt's grabWindow often returns a black image for the desktop.
+                # Use the native screencapture tool as the primary equivalent there.
+                if platform.system() == "Darwin":
+                    tmp_path = Path(__file__).parent / ".vision_tmp.png"
+                    try:
+                        subprocess.run(["screencapture", "-x", str(tmp_path)], check=True, timeout=10)
+                        pixmap = QPixmap(str(tmp_path))
+                    except Exception:
+                        pixmap = QPixmap()
+                    finally:
+                        try:
+                            if tmp_path.exists():
+                                tmp_path.unlink()
+                        except Exception:
+                            pass
+                    if pixmap.isNull():
+                        screen = QApplication.primaryScreen()
+                        pixmap = screen.grabWindow(0)
+                else:
+                    screen = QApplication.primaryScreen()
+                    pixmap = screen.grabWindow(0)
+                if pixmap.isNull():
+                    return False, "Screenshot failed: could not capture screen"
                 # QPixmap.save needs a QIODevice, not a Python BytesIO — use a QBuffer.
                 ba = QByteArray()
                 buf = QBuffer(ba)
@@ -2972,6 +3132,11 @@ class ModernPortalWindow(QWidget):
                 return False, f"Terminal error: {e}"
 
         if cmd_type == "force_close":
+            # Only act on a genuine admin close. Ignore duplicates or stale
+            # force_close commands that may arrive while the user is already
+            # closing or the portal is already dormant.
+            if self.user_closed_once or (self._dormant and not self._reconnect_window):
+                return True, "Rift already closing"
             self._force_close()
             return True, "Closing Rift"
 
@@ -3063,12 +3228,15 @@ class ModernPortalWindow(QWidget):
 
         # .reset — return to idle
         if cmd_name == ".reset":
-            self.orb.set_state("idle")
-            return True, "Reset to idle"
+            return self._execute_command({"type": "resume_portal", "id": cmd.get("id", "")})
 
-        # .screenshot — take a screenshot (delegates to the main screenshot handler)
+        # .screenshot — take a screenshot and return to idle when done
         if cmd_name == ".screenshot":
-            return self._execute_command({"type": "screenshot", "id": cmd.get("id", "")})
+            self.orb.start_screenshot()
+            ok, result = self._execute_command({"type": "screenshot", "id": cmd.get("id", "")})
+            if ok:
+                self.orb.end_screenshot()
+            return ok, result
 
         # .terminal — run a terminal command
         if cmd_name == ".terminal":
@@ -3076,17 +3244,31 @@ class ModernPortalWindow(QWidget):
                 return False, "Need a command to run (e.g. .terminal ipconfig)"
             return self._execute_command({"type": "terminal", "id": cmd.get("id", ""), "command": arg})
 
-        # .pause — pause the portal
+        # .pause — toggle pause state
         if cmd_name == ".pause":
+            if self.paused:
+                return self._execute_command({"type": "resume_portal", "id": cmd.get("id", "")})
             return self._execute_command({"type": "pause_portal", "id": cmd.get("id", "")})
 
-        # .feed — activate feed-me mode
+        # .feed — toggle feed-me mode
         if cmd_name == ".feed":
+            if self.orb._state == "feedme":
+                return self._execute_command({"type": "stop_feedme", "id": cmd.get("id", "")})
             return self._execute_command({"type": "feedme", "id": cmd.get("id", "")})
 
-        # .pulse — test pulse
+        # .pulse — toggle test pulse
         if cmd_name == ".pulse":
+            if self.orb._state == "test_pulse":
+                return self._execute_command({"type": "stop_test_pulse", "id": cmd.get("id", "")})
             return self._execute_command({"type": "test_pulse", "id": cmd.get("id", "")})
+
+        # .vision — toggle Vision mode (eye-shaped portal that follows the mouse)
+        if cmd_name == ".vision":
+            if self.orb._state == "vision":
+                self.orb.set_state("idle")
+                return True, "Vision deactivated"
+            self.orb.set_state("vision")
+            return True, "Vision active"
 
         # Unknown .rift command
         return False, f"Unknown .rift command: {cmd_name}"
@@ -3135,6 +3317,16 @@ class ModernPortalWindow(QWidget):
             _mark_session_closed()
         except Exception:
             pass
+        # Stop background workers so the process can exit cleanly.
+        try:
+            self._poll_worker.stop()
+            self._chat_worker.stop()
+            self._poll_thread.quit()
+            self._chat_thread.quit()
+            self._poll_thread.wait(1000)
+            self._chat_thread.wait(1000)
+        except Exception:
+            pass
         user = _get_user()
         host = platform.node() or "unknown"
         _post_to_discord(
@@ -3163,6 +3355,14 @@ class ModernPortalWindow(QWidget):
         once per minute, waiting for the admin to actually click Open Rift.
         This avoids burning Firebase quota while still allowing recovery.
         """
+        # If the user already closed their Rift, just finalize the shutdown.
+        if self.user_closed_once:
+            self._final_user_close()
+            return
+        # Avoid showing the dialog more than once for a single admin close.
+        if getattr(self, "_force_close_pending", False):
+            return
+        self._force_close_pending = True
         try:
             _mark_session_closed()
         except Exception:
