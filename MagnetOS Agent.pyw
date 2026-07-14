@@ -998,6 +998,7 @@ class FirebaseWorker(_QObj):
     portal_opened = Signal(str)  # session_id — client confirmed portal opened
     chat_received = Signal(str, dict)  # (session_id, chat_msg) — incoming chat from portal
     poll_status = Signal(str)  # human-readable status/error for debugging
+    refresh = Signal()  # request an immediate session poll in the worker thread
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4794,6 +4795,8 @@ class MagnetOSAgent(QWidget):
         self._firebase_worker.portal_opened.connect(self._on_portal_opened)
         self._firebase_worker.chat_received.connect(self._on_chat_received)
         self._firebase_worker.poll_status.connect(self._on_poll_status)
+        # Force refresh requests to run in the worker thread, not the UI thread
+        self._firebase_worker.refresh.connect(self._firebase_worker._poll_all_sessions)
         self._firebase_thread.started.connect(self._firebase_worker.run)
         self._firebase_thread.start()
 
@@ -5060,19 +5063,20 @@ class MagnetOSAgent(QWidget):
         self._new_session_dialog = dialog
 
     def _refresh_sessions(self):
-        """Manually refresh the session list from Firebase."""
-        self._firebase_worker._poll_all_sessions()
+        """Manually refresh the session list from Firebase in the worker thread."""
+        self._firebase_worker.refresh.emit()
 
     def _cleanup_stale_sessions(self, hours=1):
         """Mark stale open sessions as closed so they disappear from the active list."""
         cleaned = cleanup_stale_sessions(max_age_hours=hours)
-        # Force a session refresh immediately
-        self._firebase_worker._poll_all_sessions()
+        # Force a session refresh immediately in the worker thread
+        self._firebase_worker.refresh.emit()
 
     def _purge_closed_sessions(self):
         """Delete all non-open sessions from Firebase to clean up history."""
         deleted = purge_all_closed_sessions()
-        self._firebase_worker._poll_all_sessions()
+        # Force a session refresh immediately in the worker thread
+        self._firebase_worker.refresh.emit()
 
     def _close_new_session_dialog(self):
         if self._new_session_dialog:

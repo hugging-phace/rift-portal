@@ -3122,6 +3122,7 @@ class ModernPortalWindow(QWidget):
         """Put the portal into a low-polling dormant state after agent close."""
         self._dormant = True
         self._reconnect_window = False
+        self._force_close_pending = False
         self._reconnect_timer.stop()
         self.orb.set_state("awaiting")
         self._set_status("Dormant — click Reconnect to resume", PALETTE["muted"])
@@ -3134,6 +3135,7 @@ class ModernPortalWindow(QWidget):
         """User clicked Reopen Rift: poll for 5 minutes, once per minute, for an admin Open Rift."""
         self._dormant = True
         self._reconnect_window = True
+        self._force_close_pending = False
         self._poll_now = True
         self._reconnect_timer.start(5 * 60 * 1000)  # 5 minutes
         self.orb.set_state("portal_opening")
@@ -3173,6 +3175,7 @@ class ModernPortalWindow(QWidget):
         """Admin engaged (portal_open command) — resume normal operation."""
         self._dormant = False
         self._reconnect_window = False
+        self._force_close_pending = False
         self._reconnect_timer.stop()
         self.chat_btn.setVisible(True)
         self.reopen_btn.setVisible(False)
@@ -3180,6 +3183,7 @@ class ModernPortalWindow(QWidget):
     def _acknowledge_agent_close(self):
         """User chose to close their Rift after the agent ended the session."""
         self.user_closed_once = True
+        self._force_close_pending = False
         try:
             _firebase_put(f"sessions/{SESSION_ID}/status", "user-closed")
         except Exception:
