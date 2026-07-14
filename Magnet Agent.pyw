@@ -38,6 +38,7 @@ import threading as _threading
 from PySide6.QtCore import QThread, QObject as _QObj
 
 from magnet_vision import VisionServer, get_default_ip
+from magnet_orb import OrbWidget
 
 # ------------------------------------------------------------------
 # Shared components (standalone — no dependency on portal file)
@@ -330,9 +331,9 @@ class CircularGlassFrame(QFrame):
         painter.end()
 
 # ------------------------------------------------------------------
-# UI: dimensional tear orb widget
+# UI: dimensional tear orb widget (legacy — replaced by magnet_orb.OrbWidget)
 # ------------------------------------------------------------------
-class OrbWidget(QWidget):
+class _OldOrbWidget(QWidget):
     """A living AI presence field — volumetric, magnetic, and quietly intelligent.
 
     Replaces the fantasy portal with a premium computational organism:
@@ -656,10 +657,10 @@ class OrbWidget(QWidget):
         if w == 0 or h == 0:
             return
         for i in range(6):
-            n = OrbWidget._Node(self, i)
+            n = _OldOrbWidget._Node(self, i)
             self._nodes.append(n)
         for i in range(80):
-            p = OrbWidget._Particle(self)
+            p = _OldOrbWidget._Particle(self)
             self._particles.append(p)
         self._initialized = True
 
