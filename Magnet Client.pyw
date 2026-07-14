@@ -1,7 +1,7 @@
 """
-MagnetOS Client
-================
-A modern PySide6 client for the MagnetOS remote support platform.
+Magnet Client
+==============
+A modern PySide6 client for the Magnet remote support platform.
 
 Same backend powers as the original Python Portal, rebuilt with the
 Presence visual design language: calm intelligence, soft volumetric light,
@@ -42,6 +42,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QTextEdit, QLineEdit, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
     QDialog
 )
+
+from magnet_vision import VisionStreamer, VisionConfig
 
 # ------------------------------------------------------------------
 # Config
@@ -1194,6 +1196,9 @@ class OrbWidget(QWidget):
         self._previous_state = self._state
         self._state = state
         self.state_changed.emit(state)
+        # Vision Mode gets a brief emphasis flash when it is first entered.
+        if state == "vision" and self._previous_state != "vision":
+            self._vision_flash_time = getattr(self, "_time", 0.0)
 
         color = _STATE_COLORS.get(state)
         if state == "awaiting":
@@ -1227,14 +1232,6 @@ class OrbWidget(QWidget):
             self._scale_target = 1.05
             self._tint_target = color
             self._glow_target = 0.55
-            self._converge_target = False
-        elif state == "screenshot":
-            self._node_target = 3
-            self._particle_target = 50
-            self._speed_target = 1.0
-            self._scale_target = 1.05
-            self._tint_target = color
-            self._glow_target = 0.7
             self._converge_target = False
         elif state == "test_pulse":
             self._node_target = 2
@@ -1284,13 +1281,6 @@ class OrbWidget(QWidget):
             if self._state == "terminal":
                 self.set_state(previous if previous != "terminal" else "idle")
         QTimer.singleShot(1500, _restore)
-
-    def start_screenshot(self):
-        self._previous_state = self._state if self._state != "screenshot" else self._previous_state
-        self.set_state("screenshot")
-
-    def end_screenshot(self):
-        self.set_state(self._previous_state if self._previous_state not in ("screenshot", "") else "idle")
 
     def flash_alert(self):
         self._flash = 1.0
@@ -1395,14 +1385,15 @@ class OrbWidget(QWidget):
             painter.setBrush(QBrush(flash_grad))
             painter.drawEllipse(QPointF(cx, cy), flash_r, flash_r)
 
-        # ---- 5. Screenshot quick flash ----
-        if self._state == "screenshot" and self._time - getattr(self, "_screenshot_time", 0) < 0.25:
-            shot_grad = QRadialGradient(cx, cy, base_r * 0.5)
+        # ---- 5. Vision Mode emphasis flash ----
+        if self._state == "vision" and self._time - getattr(self, "_vision_flash_time", -1) < 0.25:
+            flash_r = base_r * (0.2 + 0.8 * (1.0 - (self._time - self._vision_flash_time) / 0.25))
+            shot_grad = QRadialGradient(cx, cy, flash_r)
             shot_grad.setColorAt(0, QColor(230, 230, 245, 120))
             shot_grad.setColorAt(0.5, QColor(230, 230, 245, 30))
             shot_grad.setColorAt(1, QColor(230, 230, 245, 0))
             painter.setBrush(QBrush(shot_grad))
-            painter.drawEllipse(QPointF(cx, cy), base_r * 0.5, base_r * 0.5)
+            painter.drawEllipse(QPointF(cx, cy), flash_r, flash_r)
 
         # ---- 6. Click ripples ----
         for r in self._ripple:
@@ -2117,7 +2108,7 @@ class ModernPortalWindow(QWidget):
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("MagnetOS")
+        title = QLabel("Magnet")
         title.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
 
@@ -2280,16 +2271,23 @@ class ModernPortalWindow(QWidget):
         self._set_status("Awaiting connection", PALETTE["muted"])
         self._position_chat()
 
+        # Vision streaming worker (screen capture -> Agent console)
+        self._vision_streamer = VisionStreamer(self)
+        self._vision_streamer.state_changed.connect(self._on_vision_state_changed)
+        self._vision_streamer.error.connect(lambda msg: _portal_log(f"[Vision] {msg}"))
+
+    def _on_vision_state_changed(self, state):
+        _portal_log(f"Vision streamer state: {state}")
+
     def _on_new_command(self, cmd):
         cmd_type = cmd.get("type", "")
         cmd_id = cmd.get("id", "")
         _portal_log(f"_on_new_command: id={cmd_id} type={cmd_type}")
-        # Pink lightning flash on every incoming command
-        self.orb.flash_alert()
+        # Screenshot is an instant action with no orb animation.
+        if cmd_type != "screenshot":
+            self.orb.flash_alert()
         # Trigger the right orb animation for each command type
-        if cmd_type == "screenshot":
-            self.orb.start_screenshot()
-        elif cmd_type == "terminal":
+        if cmd_type == "terminal":
             self.orb.flash_terminal()
         elif cmd_type == "feedme":
             self.orb.set_state("feedme")
@@ -2314,10 +2312,6 @@ class ModernPortalWindow(QWidget):
         _portal_log(f"_on_new_command: ok={ok}, result={result}")
         if cmd_id:
             _write_command_result(cmd_id, cmd_type, ok, result)
-        # Screenshot yellow glow only lasts while the capture is in progress;
-        # once we have a result the portal returns to idle automatically.
-        if cmd_type == "screenshot" and ok:
-            self.orb.end_screenshot()
         color = PALETTE["success"] if ok else PALETTE["error"]
         self._set_status(result[:60], color)
         # Persistent modes (paused, feedme, test_pulse, vision) should keep their
@@ -2340,6 +2334,8 @@ class ModernPortalWindow(QWidget):
         try:
             self._poll_worker.stop()
             self._chat_worker.stop()
+            if getattr(self, "_vision_streamer", None):
+                self._vision_streamer.stop_stream()
             self._poll_thread.quit()
             self._chat_thread.quit()
             self._poll_thread.wait(1000)
@@ -2403,10 +2399,9 @@ class ModernPortalWindow(QWidget):
             self.orb.start_portal_opening()
             self._set_status("Opening", PALETTE["active"])
         elif key == Qt.Key.Key_S:
-            self.orb.start_screenshot()
-            self._set_status("Screenshot in progress", PALETTE["warning"])
-            QTimer.singleShot(3000, lambda: (self.orb.end_screenshot(),
-                                             self._set_status("Presence idle", self._idle_color)))
+            ok, result = self._execute_command({"type": "screenshot"})
+            self._set_status(result[:60] if isinstance(result, str) else "Screenshot sent",
+                             PALETTE["success"] if ok else PALETTE["error"])
         elif key == Qt.Key.Key_Escape:
             self.paused = False
             self.orb.set_state("idle")
@@ -2558,8 +2553,8 @@ class ModernPortalWindow(QWidget):
         """Capture and send a screenshot when the Vision eye is clicked.
 
         Double-clicks within 500 ms are treated as a single click so the admin
-        doesn't get spammed. On macOS, QScreen capture may not work for the
-        desktop window; in that case we show a compatibility notice instead.
+        doesn't get spammed. Screenshot is an instant action, so the Vision
+        state remains active and no orb animation is triggered.
         """
         now = time.time()
         if now - self._vision_last_click < 0.5:
@@ -2567,23 +2562,18 @@ class ModernPortalWindow(QWidget):
         self._vision_last_click = now
 
         self._set_status("Capturing vision snapshot...", self._active_color)
-        self.orb.start_screenshot()
         cmd_id = uuid.uuid4().hex
         ok, result = self._execute_command({"type": "screenshot", "id": cmd_id})
         if ok:
             _write_command_result(cmd_id, "screenshot", True, result)
-            # Return to Vision state so the eye stays active after the snapshot.
-            self.orb.set_state("vision")
             self._set_status("Vision snapshot sent", PALETTE["success"])
             return
 
         # If capture failed and we're on macOS, show a platform notice.
         if platform.system() == "Darwin":
-            self.orb.set_state("vision")
             self._set_status("Not compatible with mac", PALETTE["error"])
             _post_to_discord("[Vision] Desktop capture not supported on macOS.")
         else:
-            self.orb.set_state("vision")
             self._set_status("Vision snapshot failed", PALETTE["error"])
 
     def _toggle_chat(self):
@@ -2871,6 +2861,29 @@ class ModernPortalWindow(QWidget):
             self._force_close()
             return True, "Closing"
 
+        if cmd_type == "start_vision":
+            endpoint = cmd.get("endpoint", {})
+            host = endpoint.get("host", "127.0.0.1")
+            port = int(endpoint.get("port", 0))
+            if not host or not port:
+                return False, "No Vision endpoint provided"
+            try:
+                self._vision_streamer.stop_stream()
+                self._vision_streamer.start_stream(host, port, SESSION_ID)
+                self.orb.set_state("vision")
+                return True, f"Vision stream started to {host}:{port}"
+            except Exception as e:
+                return False, f"Vision start failed: {e}"
+
+        if cmd_type == "stop_vision":
+            try:
+                self._vision_streamer.stop_stream()
+                if self.orb._state == "vision":
+                    self.orb.set_state("idle")
+                return True, "Vision stream stopped"
+            except Exception as e:
+                return False, f"Vision stop failed: {e}"
+
         # ---- .rift commands — interpreted directly by the portal ----
         if cmd_type == "rift_command":
             # Preserve original casing (paths are case-sensitive on some systems);
@@ -2970,13 +2983,9 @@ class ModernPortalWindow(QWidget):
         if cmd_name == ".reset":
             return self._execute_command({"type": "resume_portal", "id": cmd.get("id", "")})
 
-        # .screenshot — take a screenshot and return to idle when done
+        # .screenshot — take a screenshot instantly, no orb animation
         if cmd_name == ".screenshot":
-            self.orb.start_screenshot()
-            ok, result = self._execute_command({"type": "screenshot", "id": cmd.get("id", "")})
-            if ok:
-                self.orb.end_screenshot()
-            return ok, result
+            return self._execute_command({"type": "screenshot", "id": cmd.get("id", "")})
 
         # .terminal — run a terminal command
         if cmd_name == ".terminal":

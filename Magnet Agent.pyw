@@ -1,5 +1,5 @@
 """
-MagnetOS Agent — AI command center for the MagnetOS remote support platform.
+Magnet Agent — AI command center for the Magnet remote support platform.
 Controls client instances, sends commands, views screenshots, chats.
 
 Aesthetic: Presence design language — calm graphite glass, soft volumetric light,
@@ -37,6 +37,8 @@ import threading as _threading
 
 from PySide6.QtCore import QThread, QObject as _QObj
 
+from magnet_vision import VisionServer, get_default_ip
+
 # ------------------------------------------------------------------
 # Shared components (standalone — no dependency on portal file)
 # ------------------------------------------------------------------
@@ -62,6 +64,10 @@ PALETTE = {
 
 FIREBASE_URL = "https://mbe-portal-default-rtdb.firebaseio.com"
 
+def _log(msg):
+    """Minimal debug log for the Agent console."""
+    print(msg, flush=True)
+
 def _firebase_put(path, data):
     try:
         url = f"{FIREBASE_URL}/{path}.json"
@@ -78,7 +84,7 @@ def _firebase_get(path):
     try:
         url = f"{FIREBASE_URL}/{path}.json"
         req = urllib.request.Request(url,
-                                      headers={"User-Agent": "MagnetOSAgent/1.0"})
+                                      headers={"User-Agent": "MagnetAgent/1.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
@@ -3140,6 +3146,27 @@ class SessionDetailView(QWidget):
         actions_row.addWidget(self.btn_vision)
         left_layout.addLayout(actions_row)
 
+        # Vision feed panel (shown when a Vision stream is active)
+        self._vision_feed = QLabel()
+        self._vision_feed.setFixedHeight(260)
+        self._vision_feed.setStyleSheet(f"""
+            QLabel {{
+                background: {PALETTE['bg']};
+                border: 1px solid rgba(255, 255, 255, 20);
+                border-radius: 8px;
+            }}
+        """)
+        self._vision_feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._vision_feed.setScaledContents(True)
+        self._vision_feed.setVisible(False)
+        left_layout.addWidget(self._vision_feed)
+
+        self._vision_status = QLabel("Vision inactive")
+        self._vision_status.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
+        self._vision_status.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
+        self._vision_status.setVisible(False)
+        left_layout.addWidget(self._vision_status)
+
         # Command input
         cmd_label = QLabel("COMMAND INPUT  (.help for list)")
         cmd_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
@@ -3494,6 +3521,28 @@ class SessionDetailView(QWidget):
         info, color = STATE_INFO.get(self._session.orb_state, ("UNKNOWN", PALETTE["muted"]))
         self._state_badge.setText(info)
         self._state_badge.setStyleSheet(f"color: {color}; background: transparent; border: none; letter-spacing: 2px;")
+
+    def set_vision_active(self, active: bool, status: str = ""):
+        """Show or hide the Vision feed panel and update its status text."""
+        self._vision_feed.setVisible(active)
+        self._vision_status.setVisible(active)
+        if status:
+            self._vision_status.setText(status)
+
+    def set_vision_frame(self, pixmap: QPixmap):
+        """Display a new Vision frame, scaling it to the feed area."""
+        if not pixmap or pixmap.isNull():
+            return
+        scaled = pixmap.scaled(
+            self._vision_feed.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._vision_feed.setPixmap(scaled)
+        self._vision_status.setText("Live")
+
+    def clear_vision_frame(self):
+        self._vision_feed.clear()
 
 
 # ------------------------------------------------------------------
@@ -4563,12 +4612,12 @@ class ScreenshotView(QWidget):
 # ------------------------------------------------------------------
 # Main admin window
 # ------------------------------------------------------------------
-class MagnetOSAgent(QWidget):
-    """MagnetOS Agent window — AI command center with session-based content."""
+class MagnetAgent(QWidget):
+    """Magnet Agent window — AI command center with session-based content."""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MagnetOS Agent")
+        self.setWindowTitle("Magnet Agent")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
         )
@@ -4619,14 +4668,10 @@ class MagnetOSAgent(QWidget):
         title_layout.setContentsMargins(16, 0, 8, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("MagnetOS")
-        title.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        title = QLabel("Magnet")
+        title.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none; letter-spacing: 0px;")
-        subtitle = QLabel("AGENT")
-        subtitle.setFont(QFont(ADMIN_MONO, 7))
-        subtitle.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 2px;")
         title_layout.addWidget(title)
-        title_layout.addWidget(subtitle)
         title_layout.addStretch()
 
         min_btn = QPushButton("-")
@@ -4799,6 +4844,16 @@ class MagnetOSAgent(QWidget):
         self._firebase_worker.refresh.connect(self._firebase_worker._poll_all_sessions)
         self._firebase_thread.started.connect(self._firebase_worker.run)
         self._firebase_thread.start()
+
+        # ---- Vision server (receives screen stream from clients) ----
+        self._vision_server = VisionServer(self)
+        self._vision_server.server_started.connect(self._on_vision_server_started)
+        self._vision_server.client_connected.connect(self._on_vision_client_connected)
+        self._vision_server.client_disconnected.connect(self._on_vision_client_disconnected)
+        self._vision_server.frame_received.connect(self._on_vision_frame)
+        self._vision_server.error.connect(lambda msg: _log(f"[Vision] {msg}"))
+        self._vision_session_id = None
+        self._vision_target_session_id = None
 
         self._switch_view(0)
 
@@ -5152,11 +5207,16 @@ class MagnetOSAgent(QWidget):
             "test_pulse": ".pulse",
             "vision": ".vision",
         }
+        # Vision streaming is handled locally by the Agent server + start_vision command.
+        if action == "vision":
+            self._toggle_vision_stream(session_id)
+            return
+
         cmd_text = action_cmd_map.get(action, action)
         send_command_to_session(session_id, "rift_command", command=cmd_text)
 
-        # Toggle the local orb state for Feed/Pause/Pulse/Vision; Screenshot is one-shot
-        toggle_actions = {"feedme", "paused", "test_pulse", "vision"}
+        # Toggle the local orb state for Feed/Pause/Pulse; Screenshot is one-shot
+        toggle_actions = {"feedme", "paused", "test_pulse"}
         target_state = action
         for s in self._sessions:
             if s.id == session_id:
@@ -5170,9 +5230,9 @@ class MagnetOSAgent(QWidget):
         self._trigger_orb(target_state)
 
     def _trigger_orb(self, state):
-        """Trigger the sidebar orb to flash a state."""
+        """Trigger the sidebar orb to show a state."""
         if state == "screenshot":
-            self.orb.start_screenshot()
+            self.orb.flash_command()
         elif state == "paused":
             self.orb.set_paused(True)
         elif state == "feedme":
@@ -5184,11 +5244,78 @@ class MagnetOSAgent(QWidget):
         elif state == "command":
             self.orb.flash_command()
         elif state == "vision":
-            self.orb.flash_command()
+            self.orb.set_state("vision")
         elif state == "idle":
             self.orb.set_state("idle")
             self.orb.set_paused(False)
         self._update_orb_state(state)
+
+    # ------------------------------------------------------------------
+    # Vision streaming controls
+    # ------------------------------------------------------------------
+    def _toggle_vision_stream(self, session_id):
+        """Start or stop the Vision screen stream for a session."""
+        if self._vision_session_id == session_id or self._vision_target_session_id == session_id:
+            self._stop_vision_stream()
+            return
+        # Stop any existing stream first
+        self._stop_vision_stream()
+        self._vision_target_session_id = session_id
+        # Start the TCP server; once it is listening we send the start_vision command.
+        self._vision_server.start_server(port=0)
+
+    def _stop_vision_stream(self):
+        """Stop the Vision server and tell the client to stop streaming."""
+        if self._vision_session_id:
+            send_command_to_session(self._vision_session_id, "stop_vision")
+        elif self._vision_target_session_id:
+            send_command_to_session(self._vision_target_session_id, "stop_vision")
+        self._vision_server.stop_server()
+        self._vision_session_id = None
+        self._vision_target_session_id = None
+        if self._current_session:
+            self._session_detail.set_vision_active(False)
+        self._trigger_orb("idle")
+
+    def _on_vision_server_started(self, host, port):
+        """Server is listening — send the client the endpoint and update UI."""
+        session_id = self._vision_target_session_id
+        if not session_id:
+            return
+        endpoint = {"host": host, "port": port}
+        send_command_to_session(session_id, "start_vision", endpoint=endpoint)
+        if self._current_session and self._current_session.id == session_id:
+            self._session_detail.set_vision_active(True, "Waiting for client...")
+
+    def _on_vision_client_connected(self, session_id):
+        """Client connected to the Vision server."""
+        self._vision_session_id = session_id
+        self._vision_target_session_id = session_id
+        if self._current_session and self._current_session.id == session_id:
+            self._session_detail.set_vision_active(True, "Live")
+            self._session_detail.update_state("vision")
+        self._trigger_orb("vision")
+
+    def _on_vision_client_disconnected(self, session_id):
+        """Client disconnected — clear the feed and reset state."""
+        if self._vision_session_id == session_id:
+            self._vision_session_id = None
+            self._vision_target_session_id = None
+            if self._current_session:
+                self._session_detail.set_vision_active(False)
+            self._trigger_orb("idle")
+
+    def _on_vision_frame(self, session_id, jpeg_bytes):
+        """Decode an incoming Vision frame and display it in the session detail."""
+        try:
+            img = QImage.fromData(jpeg_bytes)
+            if img.isNull():
+                return
+            pixmap = QPixmap.fromImage(img)
+            if self._current_session and self._current_session.id == session_id:
+                self._session_detail.set_vision_frame(pixmap)
+        except Exception as e:
+            _log(f"Vision frame decode error: {e}")
 
     def _on_portal_open_requested(self, session_id):
         """Admin clicked Open Portal — send the command to the client."""
@@ -5322,6 +5449,12 @@ class MagnetOSAgent(QWidget):
             self._firebase_worker.stop()
             self._firebase_thread.quit()
             self._firebase_thread.wait(2000)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_vision_server", None):
+                self._vision_server.stop_server()
+                self._vision_server.wait(2000)
         except Exception:
             pass
         super().closeEvent(event)
@@ -5470,7 +5603,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    window = MagnetOSAgent()
+    window = MagnetAgent()
     window.show()
 
     sys.exit(app.exec())
