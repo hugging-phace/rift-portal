@@ -106,6 +106,22 @@ class CaptureSource:
         raise NotImplementedError
 
 
+def _image_is_black(img: Image.Image) -> bool:
+    """Return True if the image is entirely (or near) black."""
+    if img is None or img.size == (0, 0):
+        return True
+    if img.getbbox() is None:
+        return True
+    try:
+        from PIL import ImageStat
+        stat = ImageStat.Stat(img)
+        # Mean across all bands; very dark display could legitimately be < 5,
+        # but a failed capture is essentially zero.
+        return (sum(stat.mean) / max(1, len(stat.mean))) < 1.0
+    except Exception:
+        return False
+
+
 class PillowCaptureSource(CaptureSource):
     """Cross-platform capture using Pillow's ImageGrab.
 
@@ -113,11 +129,38 @@ class PillowCaptureSource(CaptureSource):
     """
 
     def capture(self) -> Image.Image:
-        img = ImageGrab.grab()
-        if img is None or img.size == (0, 0):
-            raise RuntimeError("PIL ImageGrab returned an empty image")
+        # all_screens + include_layered_windows gives the broadest reliable
+        # capture on multi-monitor Windows setups.
+        img = ImageGrab.grab(all_screens=True, include_layered_windows=True)
+        if _image_is_black(img):
+            raise RuntimeError("PIL ImageGrab returned an empty/black image")
         if not self.width:
             self.width, self.height = img.size
+        return img
+
+
+class MSSCaptureSource(CaptureSource):
+    """Fast cross-platform capture using the mss library (DXGI/GDI on Windows).
+
+    mss generally handles multiple monitors and DPI scaling better than PIL.
+    """
+
+    def __init__(self):
+        super().__init__()
+        import mss
+        self._sct = mss.mss()
+        monitor = self._sct.monitors[1]  # primary monitor
+        self.width = monitor["width"]
+        self.height = monitor["height"]
+
+    def capture(self) -> Image.Image:
+        import mss
+        if getattr(self, "_sct", None) is None:
+            self._sct = mss.mss()
+        raw = self._sct.grab(self._sct.monitors[1])
+        img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+        if _image_is_black(img):
+            raise RuntimeError("mss returned an empty/black image")
         return img
 
 
@@ -156,13 +199,24 @@ class DummyCaptureSource(CaptureSource):
 
 def make_capture_source() -> CaptureSource:
     """Factory: pick the best available capture source for this platform."""
+    # Prefer mss (DXGI/GDI) where available; it is generally more robust than
+    # PIL's GDI fallback on Windows multi-monitor setups.
     try:
-        # Try a quick PIL grab to see if the display is accessible.
-        img = ImageGrab.grab()
-        if img and img.size[0] > 0 and img.size[1] > 0:
-            return PillowCaptureSource()
+        src = MSSCaptureSource()
+        img = src.capture()
+        if img and not _image_is_black(img):
+            return src
     except Exception:
         pass
+
+    try:
+        src = PillowCaptureSource()
+        img = src.capture()
+        if img and not _image_is_black(img):
+            return src
+    except Exception:
+        pass
+
     return DummyCaptureSource()
 
 
@@ -265,11 +319,31 @@ class VisionStreamer(QThread):
         finally:
             loop.stop()
 
+    async def _open_connection_with_fallback(self):
+        """Open a TCP connection, falling back to 127.0.0.1 for same-machine use.
+
+        Windows Firewall often blocks inbound traffic on the LAN adapter even
+        after the user clicks "Allow". Loopback is usually exempt, so if the
+        client and agent are on the same machine this fallback gets through.
+        """
+        last_exc = None
+        for host in (self._host, "127.0.0.1"):
+            if not host:
+                continue
+            if host == "127.0.0.1" and self._host == "127.0.0.1":
+                continue
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, self._port), timeout=8)
+                return reader, writer
+            except Exception as e:
+                last_exc = e
+        raise last_exc or ConnectionError(f"Could not connect to Vision server at {self._host}:{self._port}")
+
     async def _main(self):
         try:
             self.state_changed.emit("connecting")
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self._host, self._port), timeout=10)
+            reader, writer = await self._open_connection_with_fallback()
             hello = json.dumps({
                 "session_id": self._session_id,
                 "platform": platform.system(),

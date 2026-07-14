@@ -5286,7 +5286,25 @@ class MagnetAgent(QWidget):
         endpoint = {"host": host, "port": port}
         send_command_to_session(session_id, "start_vision", endpoint=endpoint)
         if self._current_session and self._current_session.id == session_id:
-            self._session_detail.set_vision_active(True, "Waiting for client...")
+            self._session_detail.set_vision_active(
+                True, f"Waiting for client at {host}:{port}...")
+        # If the client never connects, surface a clear error instead of an
+        # empty panel. This usually means a firewall blocked inbound traffic.
+        QTimer.singleShot(15000, lambda sid=session_id: self._vision_connect_timeout(sid))
+
+    def _vision_connect_timeout(self, session_id):
+        """Stop the Vision server if the client did not connect in time."""
+        if self._vision_session_id or self._vision_target_session_id != session_id:
+            return
+        _log(f"[Vision] client {session_id} did not connect within 15s")
+        if self._current_session and self._current_session.id == session_id:
+            self._session_detail.add_result(
+                "error",
+                "Vision connection timed out",
+                "The client did not connect. This is usually Windows Firewall or a router/NAT blocking the agent's inbound port. "
+                "If both apps are on the same machine the latest version also tries 127.0.0.1 as a fallback.",
+            )
+        self._stop_vision_stream()
 
     def _on_vision_client_connected(self, session_id):
         """Client connected to the Vision server."""
@@ -5309,10 +5327,10 @@ class MagnetAgent(QWidget):
     def _on_vision_frame(self, session_id, jpeg_bytes):
         """Decode an incoming Vision frame and display it in the session detail."""
         try:
-            img = QImage.fromData(jpeg_bytes)
-            if img.isNull():
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(jpeg_bytes, "JPEG"):
+                _log("Vision frame: QPixmap could not decode JPEG")
                 return
-            pixmap = QPixmap.fromImage(img)
             if self._current_session and self._current_session.id == session_id:
                 self._session_detail.set_vision_frame(pixmap)
         except Exception as e:

@@ -40,7 +40,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QTextEdit, QLineEdit, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
-    QDialog
+    QDialog, QMessageBox
 )
 
 from magnet_vision import VisionStreamer, VisionConfig
@@ -2272,13 +2272,22 @@ class ModernPortalWindow(QWidget):
         self._set_status("Awaiting connection", PALETTE["muted"])
         self._position_chat()
 
-        # Vision streaming worker (screen capture -> Agent console)
-        self._vision_streamer = VisionStreamer(self)
-        self._vision_streamer.state_changed.connect(self._on_vision_state_changed)
-        self._vision_streamer.error.connect(lambda msg: _portal_log(f"[Vision] {msg}"))
+        # Vision streamer is created on demand so each stream gets a fresh
+        # QThread and asyncio event loop.
+        self._vision_streamer = None
 
     def _on_vision_state_changed(self, state):
         _portal_log(f"Vision streamer state: {state}")
+        if state == "connecting":
+            self._set_status("Vision: connecting...", PALETTE["active"])
+        elif state == "connected":
+            self._set_status("Vision: connected", PALETTE["success"])
+        elif state == "disconnected":
+            self._set_status("Vision: disconnected", PALETTE["muted"])
+
+    def _on_vision_error(self, msg):
+        _portal_log(f"[Vision] {msg}")
+        self._set_status(f"Vision: {msg}", PALETTE["error"])
 
     def _on_new_command(self, cmd):
         cmd_type = cmd.get("type", "")
@@ -2868,9 +2877,30 @@ class ModernPortalWindow(QWidget):
             port = int(endpoint.get("port", 0))
             if not host or not port:
                 return False, "No Vision endpoint provided"
+
+            # Ask the person at the client machine for permission before sharing
+            # their screen. This is a separate step from the Windows firewall prompt.
+            reply = QMessageBox.question(
+                self,
+                "Screen Sharing Request",
+                "An administrator wants to start a live Vision stream of this screen.\n\n"
+                "Allow screen sharing?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return False, "Screen sharing denied by user"
+
             try:
-                self._vision_streamer.stop_stream()
-                self._vision_streamer.start_stream(host, port, SESSION_ID)
+                if getattr(self, "_vision_streamer", None):
+                    self._vision_streamer.stop_stream()
+                    self._vision_streamer = None
+
+                streamer = VisionStreamer(self)
+                streamer.state_changed.connect(self._on_vision_state_changed)
+                streamer.error.connect(self._on_vision_error)
+                streamer.start_stream(host, port, SESSION_ID)
+                self._vision_streamer = streamer
                 self.orb.set_state("vision")
                 return True, f"Vision stream started to {host}:{port}"
             except Exception as e:
@@ -2878,7 +2908,9 @@ class ModernPortalWindow(QWidget):
 
         if cmd_type == "stop_vision":
             try:
-                self._vision_streamer.stop_stream()
+                if getattr(self, "_vision_streamer", None):
+                    self._vision_streamer.stop_stream()
+                    self._vision_streamer = None
                 if self.orb._state == "vision":
                     self.orb.set_state("idle")
                 return True, "Vision stream stopped"
