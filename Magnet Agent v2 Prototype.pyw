@@ -113,6 +113,12 @@ class GlyphRenderer:
         path.closeSubpath()
         return path
 
+    @staticmethod
+    def _hex_boundary(radius: float, theta: float) -> float:
+        """Distance from the center of a pointy-top regular hexagon to its boundary along angle theta."""
+        delta = ((theta + math.pi / 6) % (math.pi / 3)) - math.pi / 6
+        return radius * math.cos(math.pi / 6) / math.cos(delta)
+
     def _draw_node(self, painter: QPainter, x: float, y: float, r: float, color: QColor, line_width: float):
         path = self._hex_path(x, y, r)
         pen = QPen(color)
@@ -143,22 +149,41 @@ class GlyphRenderer:
             a = -math.pi / 2 + i * 2 * math.pi / 3
             points.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
 
+        # Compute per-node radii so the connecting lines stop at each node edge.
+        node_radii = []
+        for i in range(3):
+            scale = 1.0
+            if self.state == "processing" and i == 0:
+                scale = 1.0 + 0.13 * math.sin(self._phase * 3.0)
+            node_radii.append(node_r * scale)
+
+        # Connecting lines - drawn first so node outlines sit on top.
+        # Each line ends exactly at the hexagon boundary so it connects without passing through.
         line_pen = QPen(glyph)
         line_pen.setWidthF(line_width)
-        line_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        line_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         line_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(line_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(3):
+            j = (i + 1) % 3
             x1, y1 = points[i]
-            x2, y2 = points[(i + 1) % 3]
-            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+            x2, y2 = points[j]
+            dx = x2 - x1
+            dy = y2 - y1
+            dist = math.hypot(dx, dy)
+            if dist > 0:
+                ux, uy = dx / dist, dy / dist
+                theta = math.atan2(uy, ux)
+                start_offset = self._hex_boundary(node_radii[i], theta) + line_width / 2
+                end_offset = self._hex_boundary(node_radii[j], theta + math.pi) + line_width / 2
+                painter.drawLine(
+                    QPointF(x1 + ux * start_offset, y1 + uy * start_offset),
+                    QPointF(x2 - ux * end_offset, y2 - uy * end_offset),
+                )
 
         for i, (px, py) in enumerate(points):
-            scale = 1.0
-            if self.state == "processing" and i == 0:
-                scale = 1.0 + 0.13 * math.sin(self._phase * 3.0)
-            self._draw_node(painter, px, py, node_r * scale, glyph, line_width)
+            self._draw_node(painter, px, py, node_radii[i], glyph, line_width)
 
         if self._pulse > 0.01:
             t = self._pulse
