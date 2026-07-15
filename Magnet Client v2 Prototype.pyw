@@ -484,7 +484,12 @@ class MagnetClientPrototype(QApplication):
 
         if tray_geo.isValid() and tray_geo.width() > 0:
             x = tray_geo.center().x() - self.flyout.width() // 2
-            y = tray_geo.top() - self.flyout.height() - 8
+            # macOS menu bar is at the top of the screen: show the flyout below it.
+            # Windows/Linux tray is typically at the bottom: show the flyout above it.
+            if sys.platform == "darwin":
+                y = tray_geo.bottom() + 8
+            else:
+                y = tray_geo.top() - self.flyout.height() - 8
         else:
             # Fallback: center near the top of the screen for the prototype.
             x = screen.center().x() - self.flyout.width() // 2
