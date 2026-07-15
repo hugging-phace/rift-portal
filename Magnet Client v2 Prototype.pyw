@@ -52,14 +52,14 @@ class Theme:
             self.text = QColor(245, 245, 247)
             self.muted = QColor(140, 140, 150)
             self.accent = QColor(115, 103, 255)
-            self.glyph = QColor(235, 235, 240)
+            self.glyph = QColor(190, 210, 255)
         else:
             self.bg = QColor(250, 250, 252)
             self.panel = QColor(255, 255, 255)
             self.text = QColor(30, 30, 35)
             self.muted = QColor(110, 110, 120)
             self.accent = QColor(115, 103, 255)
-            self.glyph = QColor(55, 55, 65)
+            self.glyph = QColor(60, 80, 120)
 
 
 # ------------------------------------------------------------------
@@ -111,10 +111,13 @@ class GlyphRenderer:
         path.closeSubpath()
         return path
 
-    def _draw_node(self, painter: QPainter, x: float, y: float, r: float, color: QColor):
+    def _draw_node(self, painter: QPainter, x: float, y: float, r: float, color: QColor, line_width: float):
         path = self._hex_path(x, y, r)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(color))
+        pen = QPen(color)
+        pen.setWidthF(line_width)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
 
     def pixmap(self, theme: Theme) -> QPixmap:
@@ -125,11 +128,13 @@ class GlyphRenderer:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         cx = cy = self.size / 2.0
-        r = self.size * 0.28
+        r = self.size * 0.30
+        node_r = self.size * 0.10
+        line_width = max(1.5, self.size * 0.032)
 
         glyph = QColor(theme.glyph)
         if self.state == "disconnected":
-            glyph.setAlpha(120)
+            glyph.setAlpha(110)
 
         # Triangle vertex positions for the three nodes.
         points = []
@@ -137,10 +142,11 @@ class GlyphRenderer:
             a = -math.pi / 2 + i * 2 * math.pi / 3
             points.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
 
-        # Connecting lines
-        line_pen = QPen(QColor(glyph.red(), glyph.green(), glyph.blue(), 180))
-        line_pen.setWidthF(max(1.0, self.size * 0.018))
+        # Connecting lines - drawn first so node outlines sit on top.
+        line_pen = QPen(glyph)
+        line_pen.setWidthF(line_width)
         line_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        line_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(line_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(3):
@@ -148,28 +154,22 @@ class GlyphRenderer:
             x2, y2 = points[(i + 1) % 3]
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-        # Nodes
-        node_r = self.size * 0.08
+        # Outlined hexagon nodes.
         for i, (px, py) in enumerate(points):
             scale = 1.0
             if self.state == "processing" and i == 0:
-                scale = 1.0 + 0.16 * math.sin(self._phase * 3.0)
-            color = glyph
-            if self.state == "disconnected":
-                c = QColor(glyph)
-                c.setAlpha(120)
-                color = c
-            self._draw_node(painter, px, py, node_r * scale, color)
+                scale = 1.0 + 0.13 * math.sin(self._phase * 3.0)
+            self._draw_node(painter, px, py, node_r * scale, glyph, line_width)
 
-        # Connected: single subtle pulse ring
+        # Connected: single subtle pulse ring around the whole glyph.
         if self._pulse > 0.01:
             t = self._pulse
             alpha = int(255 * t * (1.0 - t))
             pen = QPen(QColor(glyph.red(), glyph.green(), glyph.blue(), alpha))
-            pen.setWidthF(max(1.0, self.size * 0.03))
+            pen.setWidthF(line_width)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            pulse_r = r + node_r + t * self.size * 0.12
+            pulse_r = r + node_r + t * self.size * 0.14
             painter.drawEllipse(QPointF(cx, cy), pulse_r, pulse_r)
 
         # Viewing: a small dot moves gently along one connection.
@@ -178,9 +178,8 @@ class GlyphRenderer:
             x1, y1 = points[0]
             x2, y2 = points[1]
             dot = QPointF(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
-            dot_r = self.size * 0.045
-            dot_color = QColor(theme.accent.red(), theme.accent.green(), theme.accent.blue(), 210)
-            painter.setBrush(QBrush(dot_color))
+            dot_r = self.size * 0.055
+            painter.setBrush(QBrush(glyph))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(dot, dot_r, dot_r)
 
@@ -194,10 +193,9 @@ class GlyphRenderer:
             x1, y1 = points[i]
             x2, y2 = points[(i + 1) % 3]
             dot = QPointF(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
-            dot_color = QColor(theme.accent.red(), theme.accent.green(), theme.accent.blue(), 220)
-            painter.setBrush(QBrush(dot_color))
+            painter.setBrush(QBrush(glyph))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(dot, self.size * 0.05, self.size * 0.05)
+            painter.drawEllipse(dot, self.size * 0.06, self.size * 0.06)
 
         painter.end()
         return pm
@@ -227,11 +225,11 @@ class FlyoutPanel(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        title = QLabel("Magnet Client")
-        title.setStyleSheet(
+        self._title = QLabel("Magnet Client")
+        self._title.setStyleSheet(
             f"color: {_css_color(self.theme.text)}; font-size: 18px; font-weight: 600;"
         )
-        layout.addWidget(title)
+        layout.addWidget(self._title)
 
         status_layout = QHBoxLayout()
         status_layout.setSpacing(6)
@@ -251,10 +249,12 @@ class FlyoutPanel(QWidget):
             ("Settings", self._on_settings),
             ("Disconnect", self._on_disconnect),
         ]
+        self._buttons = []
         for label, cb in sections:
             btn = QPushButton(label)
             btn.setStyleSheet(self._button_stylesheet())
             btn.clicked.connect(cb)
+            self._buttons.append(btn)
             layout.addWidget(btn)
 
         self._chat = QTextEdit()
@@ -323,6 +323,20 @@ class FlyoutPanel(QWidget):
         dot_color = self.theme.muted if state == "disconnected" else self.theme.accent
         self._status_dot.setStyleSheet(f"color: {_css_color(dot_color)}; font-size: 10px;")
 
+    def apply_theme(self, theme: Theme):
+        self.theme = theme
+        self._title.setStyleSheet(
+            f"color: {_css_color(theme.text)}; font-size: 18px; font-weight: 600;"
+        )
+        self._status_text.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
+        for btn in self._buttons:
+            btn.setStyleSheet(self._button_stylesheet())
+        self._chat.setStyleSheet(
+            f"color: {_css_color(theme.text)}; background: {_css_color(theme.panel)}; "
+            f"border: 1px solid {_css_color(theme.muted)}; border-radius: 8px; padding: 6px;"
+        )
+        self.update()
+
     def _on_viewing(self):
         self.window().hide()
 
@@ -357,10 +371,12 @@ class StateControlDialog(QWidget):
         layout.setSpacing(8)
         layout.setContentsMargins(14, 14, 14, 14)
 
+        self._buttons = []
         for state in GlyphRenderer.STATES:
             btn = QPushButton(state.replace("_", " ").title())
             btn.setStyleSheet(self._button_stylesheet())
             btn.clicked.connect(lambda checked=False, s=state: self.state_changed.emit(s))
+            self._buttons.append(btn)
             layout.addWidget(btn)
 
         divider = QFrame()
@@ -371,7 +387,14 @@ class StateControlDialog(QWidget):
         show_btn = QPushButton("Show Flyout")
         show_btn.setStyleSheet(self._button_stylesheet())
         show_btn.clicked.connect(lambda: self.flyout_requested.emit())
+        self._buttons.append(show_btn)
         layout.addWidget(show_btn)
+
+    def apply_theme(self, theme: Theme):
+        self.theme = theme
+        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+        for btn in self._buttons:
+            btn.setStyleSheet(self._button_stylesheet())
 
     def _button_stylesheet(self) -> str:
         t = self.theme
@@ -394,6 +417,10 @@ class MagnetClientPrototype(QApplication):
         self.setQuitOnLastWindowClosed(False)
 
         self.theme = Theme(_is_dark_mode(self))
+        try:
+            self.styleHints().colorSchemeChanged.connect(self._theme_changed)
+        except Exception:
+            pass
 
         self.glyph = GlyphRenderer(size=64)
         self.glyph.set_state("idle")
@@ -477,6 +504,12 @@ class MagnetClientPrototype(QApplication):
             self.flyout.hide()
         else:
             self._show_flyout()
+
+    def _theme_changed(self):
+        self.theme = Theme(_is_dark_mode(self))
+        self.flyout.apply_theme(self.theme)
+        self._control.apply_theme(self.theme)
+        self._update_tray_icon()
 
     def set_state(self, state: str):
         self.glyph.set_state(state)
