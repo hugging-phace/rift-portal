@@ -197,8 +197,8 @@ class AgentWindow(QWidget):
 
         self.setWindowTitle("Magnet Agent")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.resize(1100, 720)
-        self.setMinimumSize(900, 560)
+        self.resize(1200, 820)
+        self.setMinimumSize(1000, 640)
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), theme.bg)
@@ -369,14 +369,14 @@ class AgentWindow(QWidget):
         hbox.setSpacing(20)
         hbox.setContentsMargins(0, 0, 0, 0)
 
-        # Left column: tools (xnavigate/xterminal) + manual commands button
+        # Left column: file manager + manual commands button
         left_col = QWidget()
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        tools_panel = self._build_tools_panel()
-        left_layout.addWidget(tools_panel, 1)
+        self._file_manager = FileManagerWindow(self.theme, "~")
+        left_layout.addWidget(self._file_manager, 1)
 
         manual_btn = QPushButton("Run manual Magnet commands")
         manual_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -396,52 +396,6 @@ class AgentWindow(QWidget):
 
         page._body.addLayout(hbox, 1)
         return page
-
-    def _build_tools_panel(self) -> QWidget:
-        panel = QWidget()
-        panel.setStyleSheet(f"background: {_css_color(self.theme.bg)}; border-radius: 12px;")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-
-        tab_row = QHBoxLayout()
-        tab_row.setSpacing(8)
-        self._tools_btns = []
-        for idx, label in enumerate(("xnavigate", "xterminal")):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setChecked(idx == 0)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.setStyleSheet(self._tool_tab_stylesheet(idx == 0))
-            btn.clicked.connect(lambda checked=False, i=idx: self._switch_tool(i))
-            self._tools_btns.append(btn)
-            tab_row.addWidget(btn)
-        tab_row.addStretch()
-        layout.addLayout(tab_row)
-
-        self._tools_stack = QStackedWidget()
-        self._file_manager = FileManagerWindow(self.theme, "~")
-        self._terminal = TerminalWindow(self.theme)
-        self._tools_stack.addWidget(self._file_manager)
-        self._tools_stack.addWidget(self._terminal)
-        layout.addWidget(self._tools_stack, 1)
-
-        return panel
-
-    def _tool_tab_stylesheet(self, active: bool) -> str:
-        t = self.theme
-        bg = _css_color(t.accent if active else t.hover)
-        return (
-            f"QPushButton {{ background: {bg}; color: {_css_color(t.text)}; border: none; "
-            f"border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
-            f"QPushButton:hover {{ background: {_css_color(t.accent)}; }}"
-        )
-
-    def _switch_tool(self, index: int):
-        self._tools_stack.setCurrentIndex(index)
-        for i, btn in enumerate(self._tools_btns):
-            btn.setChecked(i == index)
-            btn.setStyleSheet(self._tool_tab_stylesheet(i == index))
 
     def _quick_action_button(self, label: str) -> QPushButton:
         t = self.theme
@@ -464,7 +418,6 @@ class AgentWindow(QWidget):
         elif action == "Terminal":
             self._open_terminal()
         elif action == "Feed":
-            self._switch_tool(0)
             self._file_manager._load_path(self._file_manager.feed_path)
         else:
             self.set_status(action.lower())
@@ -534,15 +487,14 @@ class AgentWindow(QWidget):
 
     def _run_magnet_command(self, cmd: str) -> str:
         lower = cmd.lower().strip()
-        if lower.startswith(".xnavigate"):
-            path = cmd[10:].strip() or "~"
-            self._switch_tool(0)
+        if lower.startswith(".xnavigate") or lower == ".navigate":
+            path = cmd[10:].strip() if lower.startswith(".xnavigate") else cmd[8:].strip()
+            path = path or "~"
             self._file_manager._load_path(Path(os.path.expanduser(path)))
-            return f"Opened xnavigate: {path}"
+            return f"Opened folder view: {path}"
         elif lower.startswith(".xterminal") or lower == ".terminal":
-            self._switch_tool(1)
-            self._terminal.output.append(f"> {cmd}")
-            return "Opened xterminal"
+            self._open_terminal()
+            return "Opened Terminal window"
         elif lower.startswith(".vision"):
             self._open_vision()
             return "Opened Vision"
@@ -550,7 +502,6 @@ class AgentWindow(QWidget):
             self._open_screenshot()
             return "Opened Screenshot"
         elif lower.startswith(".feed"):
-            self._switch_tool(0)
             self._file_manager._load_path(self._file_manager.feed_path)
             return "Opened Feed / Incoming location"
         else:
