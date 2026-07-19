@@ -10,13 +10,11 @@ This file is intentionally self-contained and does not yet wire in the
 existing Magnet Agent backend.
 """
 
-import math
 import sys
 
-from PySide6.QtCore import Qt, QTimer, QPoint, QPointF, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QColor, QPainter, QPainterPath, QBrush, QPen, QPixmap, QCursor, QFont,
-    QMouseEvent,
+    QColor, QPainter, QPainterPath, QBrush, QPen, QCursor, QMouseEvent,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -24,202 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 
-# ------------------------------------------------------------------
-# Theme helpers
-# ------------------------------------------------------------------
-def _is_dark_mode(app=None) -> bool:
-    app = app or QApplication.instance()
-    try:
-        scheme = app.styleHints().colorScheme()
-        if scheme == Qt.ColorScheme.Unknown:
-            return True  # default to a dark command-center aesthetic when unknown
-        return scheme == Qt.ColorScheme.Dark
-    except Exception:
-        pass
-    bg = app.palette().window().color()
-    return bg.lightnessF() < 0.5
-
-
-def _css_color(c: QColor) -> str:
-    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alphaF():.3f})"
-
-
-class Theme:
-    def __init__(self, dark: bool):
-        self.dark = dark
-        if dark:
-            self.bg = QColor(10, 10, 12)
-            self.panel = QColor(22, 22, 28)
-            self.text = QColor(245, 245, 247)
-            self.muted = QColor(130, 130, 145)
-            self.accent = QColor(115, 103, 255)
-            self.glyph = QColor(190, 210, 255)
-            self.hover = QColor(34, 34, 42)
-        else:
-            self.bg = QColor(245, 245, 247)
-            self.panel = QColor(255, 255, 255)
-            self.text = QColor(30, 30, 35)
-            self.muted = QColor(110, 110, 120)
-            self.accent = QColor(115, 103, 255)
-            self.glyph = QColor(60, 80, 120)
-            self.hover = QColor(235, 235, 240)
-
-
-# ------------------------------------------------------------------
-# Glyph renderer (same connected three-node hexagon used by the client)
-# ------------------------------------------------------------------
-class GlyphRenderer:
-    """Renders the Magnet three-node connected hexagon glyph as a QPixmap."""
-
-    STATES = ("idle", "connected", "viewing", "processing", "file_transfer", "disconnected")
-
-    def __init__(self, size: int = 64):
-        self.size = size
-        self.state = "idle"
-        self._time = 0.0
-        self._phase = 0.0
-        self._pulse = 0.0
-        self._last_state = "idle"
-
-    def set_state(self, state: str):
-        state = state if state in self.STATES else "idle"
-        if self._last_state != state:
-            self._last_state = state
-            if state == "connected":
-                self._pulse = 1.0
-            elif state == "disconnected":
-                self._pulse = 0.0
-            self._phase = 0.0
-        self.state = state
-
-    def update(self, dt: float):
-        self._time += dt
-        if self._pulse > 0:
-            self._pulse = max(0.0, self._pulse - dt * 1.8)
-        if self.state in ("viewing", "file_transfer", "processing"):
-            self._phase += dt
-
-    @staticmethod
-    def _hex_path(cx: float, cy: float, r: float) -> QPainterPath:
-        path = QPainterPath()
-        for i in range(7):
-            a = -math.pi / 2 + i * math.pi / 3
-            px = cx + math.cos(a) * r
-            py = cy + math.sin(a) * r
-            if i == 0:
-                path.moveTo(px, py)
-            else:
-                path.lineTo(px, py)
-        path.closeSubpath()
-        return path
-
-    @staticmethod
-    def _hex_boundary(radius: float, theta: float) -> float:
-        """Distance from the center of a pointy-top regular hexagon to its boundary along angle theta."""
-        delta = ((theta + math.pi / 6) % (math.pi / 3)) - math.pi / 6
-        return radius * math.cos(math.pi / 6) / math.cos(delta)
-
-    def _draw_node(self, painter: QPainter, x: float, y: float, r: float, color: QColor, line_width: float):
-        path = self._hex_path(x, y, r)
-        pen = QPen(color)
-        pen.setWidthF(line_width)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(path)
-
-    def pixmap(self, theme: Theme) -> QPixmap:
-        pm = QPixmap(self.size, self.size)
-        pm.fill(Qt.GlobalColor.transparent)
-
-        painter = QPainter(pm)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        cx = cy = self.size / 2.0
-        r = self.size * 0.30
-        node_r = self.size * 0.10
-        line_width = max(1.5, self.size * 0.032)
-
-        glyph = QColor(theme.glyph)
-        if self.state == "disconnected":
-            glyph.setAlpha(110)
-
-        points = []
-        for i in range(3):
-            a = -math.pi / 2 + i * 2 * math.pi / 3
-            points.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
-
-        # Compute per-node radii so the connecting lines stop at each node edge.
-        node_radii = []
-        for i in range(3):
-            scale = 1.0
-            if self.state == "processing" and i == 0:
-                scale = 1.0 + 0.13 * math.sin(self._phase * 3.0)
-            node_radii.append(node_r * scale)
-
-        # Connecting lines - drawn first so node outlines sit on top.
-        # Each line ends exactly at the hexagon boundary so it connects without passing through.
-        line_pen = QPen(glyph)
-        line_pen.setWidthF(line_width)
-        line_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
-        line_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(line_pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        for i in range(3):
-            j = (i + 1) % 3
-            x1, y1 = points[i]
-            x2, y2 = points[j]
-            dx = x2 - x1
-            dy = y2 - y1
-            dist = math.hypot(dx, dy)
-            if dist > 0:
-                ux, uy = dx / dist, dy / dist
-                theta = math.atan2(uy, ux)
-                start_offset = self._hex_boundary(node_radii[i], theta) + line_width / 2
-                end_offset = self._hex_boundary(node_radii[j], theta + math.pi) + line_width / 2
-                painter.drawLine(
-                    QPointF(x1 + ux * start_offset, y1 + uy * start_offset),
-                    QPointF(x2 - ux * end_offset, y2 - uy * end_offset),
-                )
-
-        for i, (px, py) in enumerate(points):
-            self._draw_node(painter, px, py, node_radii[i], glyph, line_width)
-
-        if self._pulse > 0.01:
-            t = self._pulse
-            alpha = int(255 * t * (1.0 - t))
-            pen = QPen(QColor(glyph.red(), glyph.green(), glyph.blue(), alpha))
-            pen.setWidthF(line_width)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            pulse_r = r + node_r + t * self.size * 0.14
-            painter.drawEllipse(QPointF(cx, cy), pulse_r, pulse_r)
-
-        if self.state == "viewing":
-            t = (math.sin(self._phase * 0.8) + 1.0) / 2.0
-            x1, y1 = points[0]
-            x2, y2 = points[1]
-            dot = QPointF(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
-            painter.setBrush(QBrush(glyph))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(dot, self.size * 0.055, self.size * 0.055)
-
-        if self.state == "file_transfer":
-            period = 1.0
-            total = self._phase % (period * 3)
-            edge = int(total / period)
-            t = (total % period) / period
-            i = edge % 3
-            x1, y1 = points[i]
-            x2, y2 = points[(i + 1) % 3]
-            dot = QPointF(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
-            painter.setBrush(QBrush(glyph))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(dot, self.size * 0.06, self.size * 0.06)
-
-        painter.end()
-        return pm
-
+from magnet_v2_glyph import Theme, GlyphRenderer, _is_dark_mode, _css_color
 
 # ------------------------------------------------------------------
 # Reusable widgets
@@ -566,8 +369,6 @@ class MagnetAgentPrototype(QApplication):
 
     def _theme_changed(self):
         self.theme = Theme(_is_dark_mode(self))
-        # Re-apply styles by recreating the window would be simplest for a prototype;
-        # here we update the glyph theme and control dialog.
         self.window._glyph_lbl.theme = self.theme
         self.window._glyph_lbl.refresh()
         self._control.apply_theme(self.theme)
@@ -584,3 +385,4 @@ class MagnetAgentPrototype(QApplication):
 if __name__ == "__main__":
     app = MagnetAgentPrototype(sys.argv)
     sys.exit(app.exec())
+
