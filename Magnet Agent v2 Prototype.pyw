@@ -778,12 +778,13 @@ class FileManagerWindow(QWidget):
 
         search_row = QHBoxLayout()
         search_lbl = QLabel("Search")
-        search_lbl.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
+        search_lbl.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 11px;")
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Filter files and folders...")
+        self.search_edit.setPlaceholderText("Narrows the list below as you type...")
+        self.search_edit.setMaximumHeight(26)
         self.search_edit.setStyleSheet(
             f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 5px; }}"
+            f"border: none; border-radius: 5px; padding: 3px 6px; font-size: 11px; }}"
         )
         self.search_edit.textChanged.connect(self._on_search)
         search_row.addWidget(search_lbl)
