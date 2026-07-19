@@ -24,6 +24,23 @@ from PySide6.QtWidgets import (
 
 from magnet_v2_glyph import Theme, GlyphRenderer, _is_dark_mode, _css_color
 
+
+def _make_agent_theme(dark: bool) -> Theme:
+    """Return an agent theme with a premium light/dark navy palette."""
+    t = Theme(dark)
+    if not dark:
+        # Light mode: pale navy background with dark soft navy panels.
+        t.bg = QColor(232, 240, 250)
+        t.panel = QColor(44, 60, 88)
+        t.text = QColor(248, 250, 252)
+        t.muted = QColor(168, 182, 202)
+        t.accent = QColor(95, 135, 255)
+        t.glyph = QColor(190, 210, 255)
+        t.glyph_tray = QColor(32, 38, 52)
+        t.hover = QColor(58, 78, 112)
+    return t
+
+
 # ------------------------------------------------------------------
 # Reusable widgets
 # ------------------------------------------------------------------
@@ -63,6 +80,12 @@ class Card(QFrame):
         body_lbl.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
         body_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(body_lbl)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
 
 
 class PageWidget(QWidget):
@@ -362,10 +385,10 @@ class AgentWindow(QWidget):
 # Main application
 # ------------------------------------------------------------------
 class MagnetAgentPrototype(QApplication):
-    def __init__(self, argv):
+    def __init__(self, argv, force_light: bool = False):
         super().__init__(argv)
 
-        self.theme = Theme(_is_dark_mode(self))
+        self.theme = _make_agent_theme(not force_light and _is_dark_mode(self))
         try:
             self.styleHints().colorSchemeChanged.connect(self._theme_changed)
         except Exception:
@@ -407,6 +430,8 @@ class MagnetAgentPrototype(QApplication):
 # Entry point
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    app = MagnetAgentPrototype(sys.argv)
+    force_light = "--light" in sys.argv
+    argv = [a for a in sys.argv if a != "--light"]
+    app = MagnetAgentPrototype(argv, force_light=force_light)
     sys.exit(app.exec())
 
