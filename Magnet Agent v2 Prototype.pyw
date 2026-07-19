@@ -19,6 +19,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QStackedWidget, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
+    QLineEdit, QTextEdit,
 )
 
 
@@ -96,9 +97,10 @@ class PageWidget(QWidget):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
 
+        title_color = _css_color(theme.text if theme.dark else theme.panel)
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet(
-            f"color: {_css_color(theme.text)}; font-size: 24px; font-weight: 600;"
+            f"color: {title_color}; font-size: 24px; font-weight: 600;"
         )
         layout.addWidget(title_lbl)
 
@@ -123,9 +125,9 @@ class SidebarPanel(QFrame):
         self._apply_theme(theme)
 
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(28)
-        shadow.setColor(QColor(0, 0, 0, 120))
-        shadow.setOffset(0, 6)
+        shadow.setBlurRadius(40)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(10, 6)
         self.setGraphicsEffect(shadow)
 
     def _apply_theme(self, theme: Theme):
@@ -180,7 +182,7 @@ class StateControlDialog(QWidget):
 # Agent window
 # ------------------------------------------------------------------
 class AgentWindow(QWidget):
-    def __init__(self, theme: Theme, glyph: GlyphRenderer, parent=None):
+    def __init__(self, theme: Theme, glyph: GlyphRenderer, initial_view: int = 0, parent=None):
         super().__init__(parent)
         self.theme = theme
         self.glyph = glyph
@@ -261,17 +263,20 @@ class AgentWindow(QWidget):
             ("Commands", self._build_commands_page()),
             ("Terminal", self._build_terminal_page()),
             ("Settings", self._build_settings_page()),
+            ("Atlas Workstation", self._build_active_session_page()),
         ]
         for idx, (label, page) in enumerate(views):
             btn = QPushButton(label)
-            btn.setStyleSheet(self._nav_stylesheet(idx == 0))
+            btn.setStyleSheet(self._nav_stylesheet(idx == initial_view))
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn.setCheckable(True)
-            btn.setChecked(idx == 0)
+            btn.setChecked(idx == initial_view)
             btn.clicked.connect(lambda checked, i=idx: self._switch_view(i))
             self._nav_btns.append(btn)
             sidebar_layout.addWidget(btn)
             self._stack.addWidget(page)
+
+        self._switch_view(initial_view)
 
         sidebar_layout.addStretch()
 
@@ -340,6 +345,73 @@ class AgentWindow(QWidget):
         page.add_card("Network", "Server endpoint and connection preferences.")
         return page
 
+    def _build_active_session_page(self):
+        page = PageWidget("Atlas Workstation", self.theme)
+
+        hbox = QHBoxLayout()
+        hbox.setSpacing(20)
+        hbox.setContentsMargins(0, 0, 0, 0)
+
+        cmd_panel = self._make_session_panel("Commands", "Type a command...", "> awaiting command...")
+        chat_panel = self._make_session_panel("Chat", "Type a message...", "Atlas: ready for instructions.")
+        hbox.addWidget(cmd_panel, 1)
+        hbox.addWidget(chat_panel, 1)
+
+        page._body.addLayout(hbox, 1)
+        return page
+
+    def _make_session_panel(self, title: str, placeholder: str, output_text: str) -> QFrame:
+        panel = QFrame()
+        panel.setStyleSheet(f"background: {_css_color(self.theme.panel)}; border-radius: 12px;")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(
+            f"color: {_css_color(self.theme.text)}; font-size: 14px; font-weight: 600;"
+        )
+        layout.addWidget(title_lbl)
+
+        output = QTextEdit()
+        output.setReadOnly(True)
+        output.setText(output_text)
+        output.setStyleSheet(
+            f"QTextEdit {{ background: {_css_color(self.theme.hover)}; "
+            f"color: {_css_color(self.theme.text)}; border: none; border-radius: 8px; "
+            f"padding: 8px; }}"
+        )
+        layout.addWidget(output, 1)
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(8)
+        line = QLineEdit()
+        line.setPlaceholderText(placeholder)
+        line.setStyleSheet(
+            f"QLineEdit {{ background: {_css_color(self.theme.hover)}; "
+            f"color: {_css_color(self.theme.text)}; border: none; border-radius: 6px; "
+            f"padding: 6px; }}"
+        )
+        btn = QPushButton("Send")
+        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(self.theme.accent)}; "
+            f"color: {_css_color(self.theme.text)}; border: none; border-radius: 6px; "
+            f"padding: 6px 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(self.theme.hover)}; }}"
+        )
+        input_row.addWidget(line, 1)
+        input_row.addWidget(btn)
+        layout.addLayout(input_row)
+
+        shadow = QGraphicsDropShadowEffect(panel)
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        shadow.setOffset(0, 4)
+        panel.setGraphicsEffect(shadow)
+
+        return panel
+
     def _switch_view(self, index: int):
         self._stack.setCurrentIndex(index)
         for i, btn in enumerate(self._nav_btns):
@@ -385,10 +457,11 @@ class AgentWindow(QWidget):
 # Main application
 # ------------------------------------------------------------------
 class MagnetAgentPrototype(QApplication):
-    def __init__(self, argv, force_light: bool = False):
+    def __init__(self, argv, force_light: bool = False, initial_view: int = 0):
         super().__init__(argv)
 
         self.theme = _make_agent_theme(not force_light and _is_dark_mode(self))
+        self._initial_view = initial_view
         try:
             self.styleHints().colorSchemeChanged.connect(self._theme_changed)
         except Exception:
@@ -397,7 +470,7 @@ class MagnetAgentPrototype(QApplication):
         self.glyph = GlyphRenderer(size=160)
         self.glyph.set_state("idle")
 
-        self.window = AgentWindow(self.theme, self.glyph)
+        self.window = AgentWindow(self.theme, self.glyph, initial_view=self._initial_view)
         self.window.set_status("idle")
         self.window.show()
 
@@ -430,8 +503,25 @@ class MagnetAgentPrototype(QApplication):
 # Entry point
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    force_light = "--light" in sys.argv
-    argv = [a for a in sys.argv if a != "--light"]
-    app = MagnetAgentPrototype(argv, force_light=force_light)
+    view_map = {"sessions": 0, "commands": 1, "terminal": 2, "settings": 3, "active": 4}
+    force_light = False
+    initial_view = 0
+    argv = []
+    i = 0
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a == "--light":
+            force_light = True
+        elif a.startswith("--view="):
+            initial_view = view_map.get(a.split("=", 1)[1], 0)
+        elif a == "--view":
+            i += 1
+            if i < len(sys.argv):
+                initial_view = view_map.get(sys.argv[i], 0)
+        else:
+            argv.append(a)
+        i += 1
+
+    app = MagnetAgentPrototype(argv, force_light=force_light, initial_view=initial_view)
     sys.exit(app.exec())
 
