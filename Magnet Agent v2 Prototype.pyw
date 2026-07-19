@@ -775,6 +775,21 @@ class FileManagerWindow(QWidget):
         )
         path_row.addWidget(self.path_label)
         path_row.addStretch()
+
+        search_row = QHBoxLayout()
+        search_lbl = QLabel("Search")
+        search_lbl.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Filter files and folders...")
+        self.search_edit.setStyleSheet(
+            f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 5px; }}"
+        )
+        self.search_edit.textChanged.connect(self._on_search)
+        search_row.addWidget(search_lbl)
+        search_row.addWidget(self.search_edit, 1)
+        path_row.addLayout(search_row)
+
         files_layout.addLayout(path_row)
 
         self.files = QTreeWidget()
@@ -990,6 +1005,13 @@ class FileManagerWindow(QWidget):
         except Exception:
             return "--"
 
+    def _on_search(self, text: str):
+        query = text.strip().lower()
+        for i in range(self.files.topLevelItemCount()):
+            item = self.files.topLevelItem(i)
+            name = item.text(0).lower()
+            item.setHidden(query != "" and query not in name)
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -1150,6 +1172,7 @@ class MagnetAgentPrototype(QApplication):
 
         self.theme = _make_agent_theme(not force_light and _is_dark_mode(self))
         self._initial_view = initial_view
+        self._apply_scroll_style()
         try:
             self.styleHints().colorSchemeChanged.connect(self._theme_changed)
         except Exception:
@@ -1177,9 +1200,23 @@ class MagnetAgentPrototype(QApplication):
 
     def _theme_changed(self):
         self.theme = Theme(_is_dark_mode(self))
+        self._apply_scroll_style()
         self.window._glyph_lbl.theme = self.theme
         self.window._glyph_lbl.refresh()
         self._control.apply_theme(self.theme)
+
+    def _apply_scroll_style(self):
+        t = self.theme
+        self.setStyleSheet(
+            "QScrollBar:vertical { background: " + _css_color(t.hover) + "; width: 8px; border-radius: 4px; }"
+            "QScrollBar::handle:vertical { background: " + _css_color(t.accent) + "; border-radius: 4px; min-height: 24px; }"
+            "QScrollBar::handle:vertical:hover { background: " + _css_color(t.text) + "; }"
+            "QScrollBar:horizontal { background: " + _css_color(t.hover) + "; height: 8px; border-radius: 4px; }"
+            "QScrollBar::handle:horizontal { background: " + _css_color(t.accent) + "; border-radius: 4px; min-width: 24px; }"
+            "QScrollBar::handle:horizontal:hover { background: " + _css_color(t.text) + "; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, "
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; height: 0px; }"
+        )
 
     def set_state(self, state: str):
         self.glyph.set_state(state)
