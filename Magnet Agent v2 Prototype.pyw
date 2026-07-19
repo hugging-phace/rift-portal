@@ -10,16 +10,22 @@ This file is intentionally self-contained and does not yet wire in the
 existing Magnet Agent backend.
 """
 
+import os
 import sys
+from datetime import datetime
+from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QUrl
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QBrush, QPen, QCursor, QMouseEvent,
+    QDesktopServices,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QStackedWidget, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
-    QLineEdit, QTextEdit,
+    QLineEdit, QTextEdit, QListWidget, QListWidgetItem, QMessageBox,
+    QTreeWidget, QTreeWidgetItem, QSplitter, QFileDialog, QMenu,
+    QHeaderView,
 )
 
 
@@ -125,9 +131,9 @@ class SidebarPanel(QFrame):
         self._apply_theme(theme)
 
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(40)
-        shadow.setColor(QColor(0, 0, 0, 150))
-        shadow.setOffset(10, 6)
+        shadow.setBlurRadius(24)
+        shadow.setColor(QColor(0, 0, 0, 85))
+        shadow.setOffset(4, 4)
         self.setGraphicsEffect(shadow)
 
     def _apply_theme(self, theme: Theme):
@@ -348,19 +354,114 @@ class AgentWindow(QWidget):
     def _build_active_session_page(self):
         page = PageWidget("Atlas Workstation", self.theme)
 
+        quick_row = QHBoxLayout()
+        quick_row.setSpacing(8)
+        quick_row.setContentsMargins(0, 0, 0, 0)
+        for label in ("Screenshot", "Feed", "Pause", "Pulse", "Vision", "Files", "Terminal"):
+            btn = self._quick_action_button(label)
+            btn.clicked.connect(lambda checked=False, a=label: self._on_quick_action(a))
+            quick_row.addWidget(btn)
+        quick_row.addStretch()
+        page._body.addLayout(quick_row)
+
         hbox = QHBoxLayout()
         hbox.setSpacing(20)
         hbox.setContentsMargins(0, 0, 0, 0)
 
-        cmd_panel = self._make_session_panel("Commands", "Type a command...", "> awaiting command...")
-        chat_panel = self._make_session_panel("Chat", "Type a message...", "Atlas: ready for instructions.")
-        hbox.addWidget(cmd_panel, 1)
+        # Left column: small command box + large tools (xnavigate/xterminal)
+        left_col = QWidget()
+        left_layout = QVBoxLayout(left_col)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
+
+        cmd_panel, self._cmd_output, self._cmd_line = self._make_session_panel(
+            "Commands", "Type a command...", "> awaiting command...", self._on_command_send
+        )
+        cmd_panel.setMaximumHeight(180)
+        left_layout.addWidget(cmd_panel)
+
+        tools_panel = self._build_tools_panel()
+        left_layout.addWidget(tools_panel, 1)
+
+        chat_panel, self._chat_output, self._chat_line = self._make_session_panel(
+            "Chat", "Type a message...", "Atlas: ready for instructions.", self._on_chat_send
+        )
+        hbox.addWidget(left_col, 2)
         hbox.addWidget(chat_panel, 1)
 
         page._body.addLayout(hbox, 1)
         return page
 
-    def _make_session_panel(self, title: str, placeholder: str, output_text: str) -> QFrame:
+    def _build_tools_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setStyleSheet(f"background: {_css_color(self.theme.bg)}; border-radius: 12px;")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(8)
+        self._tools_btns = []
+        for idx, label in enumerate(("xnavigate", "xterminal")):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(idx == 0)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setStyleSheet(self._tool_tab_stylesheet(idx == 0))
+            btn.clicked.connect(lambda checked=False, i=idx: self._switch_tool(i))
+            self._tools_btns.append(btn)
+            tab_row.addWidget(btn)
+        tab_row.addStretch()
+        layout.addLayout(tab_row)
+
+        self._tools_stack = QStackedWidget()
+        self._file_manager = FileManagerWindow(self.theme, "~")
+        self._terminal = TerminalWindow(self.theme)
+        self._tools_stack.addWidget(self._file_manager)
+        self._tools_stack.addWidget(self._terminal)
+        layout.addWidget(self._tools_stack, 1)
+
+        return panel
+
+    def _tool_tab_stylesheet(self, active: bool) -> str:
+        t = self.theme
+        bg = _css_color(t.accent if active else t.hover)
+        return (
+            f"QPushButton {{ background: {bg}; color: {_css_color(t.text)}; border: none; "
+            f"border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(t.accent)}; }}"
+        )
+
+    def _switch_tool(self, index: int):
+        self._tools_stack.setCurrentIndex(index)
+        for i, btn in enumerate(self._tools_btns):
+            btn.setChecked(i == index)
+            btn.setStyleSheet(self._tool_tab_stylesheet(i == index))
+
+    def _quick_action_button(self, label: str) -> QPushButton:
+        t = self.theme
+        btn = QPushButton(label)
+        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(t.hover)}; color: {_css_color(t.text)}; border: none; "
+            f"border-radius: 6px; padding: 6px 12px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(t.accent)}; }}"
+        )
+        return btn
+
+    def _on_quick_action(self, action: str):
+        if action == "Vision":
+            self._open_vision()
+        elif action == "Screenshot":
+            self._open_screenshot()
+        elif action == "Files":
+            self._open_file_manager()
+        elif action == "Terminal":
+            self._open_terminal()
+        else:
+            self.set_status(action.lower())
+
+    def _make_session_panel(self, title: str, placeholder: str, output_text: str, on_send):
         panel = QFrame()
         panel.setStyleSheet(f"background: {_css_color(self.theme.panel)}; border-radius: 12px;")
         layout = QVBoxLayout(panel)
@@ -400,6 +501,7 @@ class AgentWindow(QWidget):
             f"padding: 6px 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(self.theme.hover)}; }}"
         )
+        btn.clicked.connect(lambda: on_send(line, output))
         input_row.addWidget(line, 1)
         input_row.addWidget(btn)
         layout.addLayout(input_row)
@@ -410,7 +512,50 @@ class AgentWindow(QWidget):
         shadow.setOffset(0, 4)
         panel.setGraphicsEffect(shadow)
 
-        return panel
+        return panel, output, line
+
+    def _on_command_send(self, line: QLineEdit, output: QTextEdit):
+        text = line.text().strip()
+        line.clear()
+        if not text:
+            return
+        output.append(f"> {text}")
+        lower = text.lower()
+        if lower.startswith(".xnavigate"):
+            path = text[10:].strip() or "~"
+            self._switch_tool(0)
+            self._file_manager._load_path(Path(os.path.expanduser(path)))
+            output.append(f"Opened xnavigate: {path}")
+        elif lower.startswith(".xterminal") or lower == ".terminal":
+            self._switch_tool(1)
+            self._terminal.output.append(f"> {text}")
+            output.append("Opened xterminal")
+        elif lower.startswith(".vision"):
+            self._open_vision()
+        else:
+            output.append(f"Sent to Atlas Workstation: {text}")
+
+    def _on_chat_send(self, line: QLineEdit, output: QTextEdit):
+        text = line.text().strip()
+        line.clear()
+        if text:
+            output.append(f"You: {text}")
+
+    def _open_vision(self):
+        self._vision_window = VisionWindow(self.theme)
+        self._vision_window.show()
+
+    def _open_file_manager(self, path: str = "~"):
+        self._file_window = FileManagerWindow(self.theme, path)
+        self._file_window.show()
+
+    def _open_terminal(self):
+        self._terminal_window = TerminalWindow(self.theme)
+        self._terminal_window.show()
+
+    def _open_screenshot(self):
+        self._screenshot_window = ScreenshotWindow(self.theme)
+        self._screenshot_window.show()
 
     def _switch_view(self, index: int):
         self._stack.setCurrentIndex(index)
@@ -451,6 +596,549 @@ class AgentWindow(QWidget):
             "disconnected": "DISCONNECTED",
         }
         self._glyph_status.setText(labels.get(state, state.upper()))
+
+
+# ------------------------------------------------------------------
+# Pop-out windows
+# ------------------------------------------------------------------
+class VisionWindow(QWidget):
+    """Pop-out Vision viewer with an Interact toggle for pointer/keyboard control."""
+
+    def __init__(self, theme: Theme, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setWindowTitle("Vision — Atlas Workstation")
+        self.resize(1200, 800)
+        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+        self._interact = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        title = QLabel("Vision — Atlas Workstation")
+        title.setStyleSheet(
+            f"color: {_css_color(theme.panel)}; font-size: 18px; font-weight: 600;"
+        )
+        header.addWidget(title)
+        header.addStretch()
+
+        self.interact_btn = QPushButton("Interact")
+        self.interact_btn.setCheckable(True)
+        self.interact_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.interact_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f"QPushButton:checked {{ background: {_css_color(theme.accent)}; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
+        )
+        self.interact_btn.toggled.connect(self._toggle_interact)
+        header.addWidget(self.interact_btn)
+        layout.addLayout(header)
+
+        self.video = QLabel("Vision stream placeholder")
+        self.video.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video.setStyleSheet(
+            f"background: {_css_color(theme.panel)}; color: {_css_color(theme.text)}; "
+            f"border-radius: 12px; font-size: 14px;"
+        )
+        self.video.setMinimumSize(800, 600)
+        self.video.setMouseTracking(True)
+        self.video.mouseMoveEvent = self._on_mouse_move
+        self.video.mousePressEvent = self._on_mouse_press
+        self.video.keyPressEvent = self._on_key_press
+        self.video.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        layout.addWidget(self.video, 1)
+
+        self.status = QLabel("Click Interact to control the remote pointer and keyboard.")
+        self.status.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
+        layout.addWidget(self.status)
+
+    def _toggle_interact(self, checked: bool):
+        self._interact = checked
+        if checked:
+            self.video.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+            self.status.setText("Interact mode ON — pointer and keyboard events are forwarded silently.")
+        else:
+            self.video.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            self.status.setText("Click Interact to control the remote pointer and keyboard.")
+
+    def _on_mouse_move(self, event):
+        if self._interact:
+            pos = event.position().toPoint()
+            self.status.setText(f"Pointer at ({pos.x()}, {pos.y()}) — forwarding silently")
+        else:
+            QLabel.mouseMoveEvent(self.video, event)
+
+    def _on_mouse_press(self, event):
+        if self._interact:
+            pos = event.position().toPoint()
+            self.status.setText(f"Click at ({pos.x()}, {pos.y()}) — forwarding silently")
+        else:
+            QLabel.mousePressEvent(self.video, event)
+
+    def _on_key_press(self, event):
+        if self._interact:
+            self.status.setText(f"Key pressed: {event.text()} — forwarding silently")
+        else:
+            QLabel.keyPressEvent(self.video, event)
+
+
+class FileManagerWindow(QWidget):
+    """Agent-side remote file manager (.xnavigate)."""
+
+    LOCATIONS = {
+        "Home": Path.home(),
+        "Desktop": Path.home() / "Desktop",
+        "Documents": Path.home() / "Documents",
+        "Downloads": Path.home() / "Downloads",
+        "Pictures": Path.home() / "Pictures",
+        "Videos": Path.home() / "Videos",
+        "Dropbox": Path.home() / "Dropbox",
+        "OneDrive": Path.home() / "OneDrive",
+    }
+
+    def __init__(self, theme: Theme, path: str = "~", parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setWindowTitle("File Manager — Atlas Workstation")
+        self.resize(1000, 750)
+        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+        self.setAcceptDrops(True)
+
+        self.current_path = Path(os.path.expanduser(path))
+        self._clipboard = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        for label in ("Back", "Refresh", "Upload", "Download", "Delete", "New Folder"):
+            btn = QPushButton(label)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+                f"border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; }}"
+                f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
+            )
+            btn.clicked.connect(lambda checked=False, a=label: self._toolbar_action(a))
+            toolbar.addWidget(btn)
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
+        # Main splitter: locations on left, files on right
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Locations sidebar
+        locations_panel = QWidget()
+        locations_panel.setStyleSheet(
+            f"background: {_css_color(theme.panel)}; border-radius: 12px;"
+        )
+        locations_layout = QVBoxLayout(locations_panel)
+        locations_layout.setContentsMargins(10, 10, 10, 10)
+        locations_layout.setSpacing(6)
+
+        loc_title = QLabel("Locations")
+        loc_title.setStyleSheet(
+            f"color: {_css_color(theme.text)}; font-size: 13px; font-weight: 600;"
+        )
+        locations_layout.addWidget(loc_title)
+
+        self.locations = QListWidget()
+        self.locations.setStyleSheet(
+            f"QListWidget {{ background: transparent; color: {_css_color(theme.text)}; border: none; }}"
+            f"QListWidget::item {{ padding: 6px; border-radius: 4px; }}"
+            f"QListWidget::item:selected {{ background: {_css_color(theme.accent)}; }}"
+            f"QListWidget::item:hover {{ background: {_css_color(theme.hover)}; }}"
+        )
+        self.locations.itemClicked.connect(self._location_clicked)
+        locations_layout.addWidget(self.locations, 1)
+        splitter.addWidget(locations_panel)
+
+        # Files view
+        files_panel = QWidget()
+        files_panel.setStyleSheet(
+            f"background: {_css_color(theme.panel)}; border-radius: 12px;"
+        )
+        files_layout = QVBoxLayout(files_panel)
+        files_layout.setContentsMargins(10, 10, 10, 10)
+        files_layout.setSpacing(8)
+
+        path_row = QHBoxLayout()
+        self.path_label = QLabel()
+        self.path_label.setStyleSheet(
+            f"color: {_css_color(theme.text)}; font-size: 13px; font-weight: 600;"
+        )
+        path_row.addWidget(self.path_label)
+        path_row.addStretch()
+        files_layout.addLayout(path_row)
+
+        self.files = QTreeWidget()
+        self.files.setHeaderLabels(["Name", "Size", "Modified"])
+        self.files.setStyleSheet(
+            f"QTreeWidget {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 8px; }}"
+            f"QTreeWidget::item {{ padding: 6px; }}"
+            f"QTreeWidget::item:selected {{ background: {_css_color(theme.accent)}; }}"
+        )
+        self.files.setColumnWidth(0, 320)
+        self.files.header().setStretchLastSection(False)
+        self.files.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.files.setColumnWidth(1, 100)
+        self.files.setColumnWidth(2, 160)
+        self.files.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.files.customContextMenuRequested.connect(self._context_menu)
+        self.files.itemDoubleClicked.connect(self._item_double_clicked)
+        files_layout.addWidget(self.files, 1)
+        splitter.addWidget(files_panel)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+        splitter.setSizes([200, 700])
+        layout.addWidget(splitter, 1)
+
+        # Status
+        self.status = QLabel("Ready")
+        self.status.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
+        layout.addWidget(self.status)
+
+        self._load_locations()
+        self._load_path(self.current_path)
+
+    def _load_locations(self):
+        self.locations.clear()
+        for name, p in self.LOCATIONS.items():
+            item = QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole, str(p))
+            if not p.exists():
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                item.setForeground(QColor(255, 255, 255, 120))
+            self.locations.addItem(item)
+
+    def _load_path(self, path):
+        if isinstance(path, str):
+            path = Path(os.path.expanduser(path))
+        self.current_path = path
+        self.path_label.setText(str(path))
+        self.files.clear()
+        try:
+            entries = sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+            for entry in entries:
+                item = QTreeWidgetItem()
+                item.setText(0, f"{'📁' if entry.is_dir() else '📄'}  {entry.name}")
+                if entry.is_file():
+                    item.setText(1, self._human_size(entry.stat().st_size))
+                    item.setText(2, self._fmt_time(entry.stat().st_mtime))
+                else:
+                    item.setText(1, "--")
+                    item.setText(2, "--")
+                item.setData(0, Qt.ItemDataRole.UserRole, str(entry))
+                self.files.addTopLevelItem(item)
+            self.status.setText(f"{len(entries)} items")
+        except Exception as e:
+            self.status.setText(f"Unable to read path: {e}")
+
+    def _location_clicked(self, item):
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            self._load_path(Path(path))
+
+    def _item_double_clicked(self, item):
+        path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path_str:
+            return
+        p = Path(path_str)
+        if p.is_dir():
+            self._load_path(p)
+        else:
+            self._open_file(p)
+
+    def _open_file(self, p: Path):
+        try:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
+        except Exception as e:
+            self.status.setText(f"Open failed: {e}")
+
+    def _context_menu(self, pos):
+        item = self.files.itemAt(pos)
+        if item:
+            self.files.setCurrentItem(item)
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {_css_color(self.theme.panel)}; color: {_css_color(self.theme.text)}; border: none; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 12px; }}"
+            f"QMenu::item:selected {{ background: {_css_color(self.theme.accent)}; }}"
+        )
+        menu.addAction("Open", self._ctx_open)
+        menu.addAction("Download", self._ctx_download)
+        menu.addAction("Copy", self._ctx_copy)
+        if self._clipboard:
+            menu.addAction("Paste", self._ctx_paste)
+        menu.addAction("Delete", self._ctx_delete)
+        menu.exec(self.files.mapToGlobal(pos))
+
+    def _ctx_open(self):
+        item = self.files.currentItem()
+        if item:
+            self._item_double_clicked(item)
+
+    def _ctx_download(self):
+        item = self.files.currentItem()
+        if not item:
+            return
+        src = Path(item.data(0, Qt.ItemDataRole.UserRole))
+        if not src.is_file():
+            self.status.setText("Select a file to download")
+            return
+        dest = QFileDialog.getExistingDirectory(self, "Download to...")
+        if dest:
+            try:
+                import shutil
+                shutil.copy2(src, Path(dest) / src.name)
+                self.status.setText(f"Downloaded {src.name}")
+            except Exception as e:
+                self.status.setText(f"Download failed: {e}")
+
+    def _ctx_copy(self):
+        item = self.files.currentItem()
+        if item:
+            self._clipboard = Path(item.data(0, Qt.ItemDataRole.UserRole))
+            self.status.setText(f"Copied {self._clipboard.name} to clipboard")
+
+    def _ctx_paste(self):
+        if not self._clipboard:
+            return
+        try:
+            import shutil
+            dest = self.current_path / self._clipboard.name
+            if self._clipboard.is_dir():
+                shutil.copytree(self._clipboard, dest, dirs_exist_ok=True)
+            else:
+                shutil.copy2(self._clipboard, dest)
+            self._load_path(self.current_path)
+            self.status.setText(f"Pasted {self._clipboard.name}")
+        except Exception as e:
+            self.status.setText(f"Paste failed: {e}")
+
+    def _ctx_delete(self):
+        item = self.files.currentItem()
+        if not item:
+            return
+        src = Path(item.data(0, Qt.ItemDataRole.UserRole))
+        reply = QMessageBox.question(
+            self, "Delete", f"Delete {src.name}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            try:
+                import shutil
+                if src.is_dir():
+                    shutil.rmtree(src)
+                else:
+                    src.unlink()
+                self._load_path(self.current_path)
+                self.status.setText(f"Deleted {src.name}")
+            except Exception as e:
+                self.status.setText(f"Delete failed: {e}")
+
+    def _toolbar_action(self, action: str):
+        if action == "Back":
+            parent = self.current_path.parent
+            if parent != self.current_path:
+                self._load_path(parent)
+        elif action == "Refresh":
+            self._load_path(self.current_path)
+        elif action == "Upload":
+            files, _ = QFileDialog.getOpenFileNames(self, "Upload files")
+            for f in files:
+                name = Path(f).name
+                try:
+                    import shutil
+                    shutil.copy2(f, self.current_path / name)
+                    self.status.setText(f"Uploaded {name}")
+                except Exception as e:
+                    self.status.setText(f"Upload failed: {e}")
+            self._load_path(self.current_path)
+        elif action == "Download":
+            self._ctx_download()
+        elif action == "Delete":
+            self._ctx_delete()
+        elif action == "New Folder":
+            from PySide6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+            if ok and name:
+                try:
+                    (self.current_path / name).mkdir(exist_ok=True)
+                    self._load_path(self.current_path)
+                except Exception as e:
+                    self.status.setText(f"Create folder failed: {e}")
+
+    def _human_size(self, size: int) -> str:
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if abs(size) < 1024:
+                return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"
+
+    def _fmt_time(self, ts: float) -> str:
+        try:
+            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return "--"
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        for url in event.mimeData().urls():
+            local = url.toLocalFile()
+            if local:
+                name = Path(local).name
+                try:
+                    import shutil
+                    shutil.copy2(local, self.current_path / name)
+                    self.status.setText(f"Uploaded {name}")
+                except Exception as e:
+                    self.status.setText(f"Upload failed: {e}")
+        self._load_path(self.current_path)
+
+
+class TerminalWindow(QWidget):
+    """Agent-side remote terminal (.xterminal)."""
+
+    def __init__(self, theme: Theme, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setWindowTitle("Terminal — Atlas Workstation")
+        self.resize(900, 600)
+        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        title = QLabel("Terminal — Atlas Workstation")
+        title.setStyleSheet(
+            f"color: {_css_color(theme.panel)}; font-size: 16px; font-weight: 600;"
+        )
+        header.addWidget(title)
+        header.addStretch()
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        clear_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
+        )
+        clear_btn.clicked.connect(self._clear)
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
+
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setStyleSheet(
+            f"QTextEdit {{ background: {_css_color(theme.panel)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 12px; padding: 10px; font-family: monospace; }}"
+        )
+        self.output.setText(
+            "Remote terminal connected to Atlas Workstation.\n"
+            "Type commands below to run them silently on the client.\n"
+        )
+        layout.addWidget(self.output, 1)
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(8)
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Enter command...")
+        self.input.setStyleSheet(
+            f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 6px; font-family: monospace; }}"
+        )
+        self.input.returnPressed.connect(self._run_command)
+        run_btn = QPushButton("Run")
+        run_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        run_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.hover)}; }}"
+        )
+        run_btn.clicked.connect(self._run_command)
+        input_row.addWidget(self.input, 1)
+        input_row.addWidget(run_btn)
+        layout.addLayout(input_row)
+
+    def _run_command(self):
+        cmd = self.input.text().strip()
+        self.input.clear()
+        if not cmd:
+            return
+        self.output.append(f"> {cmd}")
+        # Stub: real execution would run on the client silently via the agent backend.
+        self.output.append(f"[remote] {cmd}")
+
+    def _clear(self):
+        self.output.setText("Remote terminal connected to Atlas Workstation.\n")
+
+
+class ScreenshotWindow(QWidget):
+    """Pop-out screenshot viewer."""
+
+    def __init__(self, theme: Theme, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setWindowTitle("Screenshot — Atlas Workstation")
+        self.resize(1000, 750)
+        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        title = QLabel("Screenshot — Atlas Workstation")
+        title.setStyleSheet(
+            f"color: {_css_color(theme.panel)}; font-size: 18px; font-weight: 600;"
+        )
+        header.addWidget(title)
+        header.addStretch()
+
+        save_btn = QPushButton("Save")
+        save_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        save_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.hover)}; }}"
+        )
+        save_btn.clicked.connect(self._save)
+        header.addWidget(save_btn)
+        layout.addLayout(header)
+
+        self.image = QLabel("Screenshot captured")
+        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image.setStyleSheet(
+            f"background: {_css_color(theme.panel)}; color: {_css_color(theme.text)}; "
+            f"border-radius: 12px; font-size: 14px;"
+        )
+        self.image.setMinimumSize(800, 600)
+        layout.addWidget(self.image, 1)
+
+    def _save(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Screenshot", "atlas_screenshot.png")
+        if path:
+            self.image.setText(f"Saved to {path}")
 
 
 # ------------------------------------------------------------------
