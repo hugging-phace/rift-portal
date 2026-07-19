@@ -106,12 +106,8 @@ class SidebarPanel(QFrame):
         self.setGraphicsEffect(shadow)
 
     def _apply_theme(self, theme: Theme):
-        border = QColor(
-            theme.muted.red(), theme.muted.green(), theme.muted.blue(), 55
-        )
         self.setStyleSheet(
             f"background: {_css_color(theme.panel)}; "
-            f"border: 1px solid {_css_color(border)}; "
             f"border-radius: 18px;"
         )
 
