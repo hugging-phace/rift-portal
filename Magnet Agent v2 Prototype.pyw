@@ -11,6 +11,8 @@ existing Magnet Agent backend.
 """
 
 import os
+import platform
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -19,7 +21,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal, QUrl, QProcess
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QBrush, QPen, QCursor, QMouseEvent,
-    QDesktopServices,
+    QDesktopServices, QPalette,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -67,12 +69,15 @@ class GlyphLabel(QLabel):
 
 
 class Card(QFrame):
-    def __init__(self, title: str, body: str, theme: Theme, parent=None):
+    def __init__(self, title: str, body: str, theme: Theme, parent=None, callback=None):
         super().__init__(parent)
         self.theme = theme
+        self.callback = callback
         self.setStyleSheet(
             f"background: {_css_color(theme.panel)}; border-radius: 12px;"
         )
+        if callback:
+            self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(8)
@@ -89,37 +94,66 @@ class Card(QFrame):
         body_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(body_lbl)
 
+        if callback:
+            open_lbl = QLabel("Open →")
+            open_lbl.setStyleSheet(
+                f"color: {_css_color(theme.accent)}; font-size: 11px; font-weight: 600;"
+            )
+            layout.addWidget(open_lbl)
+
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(18)
         shadow.setColor(QColor(0, 0, 0, 70))
         shadow.setOffset(0, 4)
         self.setGraphicsEffect(shadow)
 
+    def mousePressEvent(self, event: QMouseEvent):
+        if self.callback:
+            self.callback()
+        super().mousePressEvent(event)
 
-class PageWidget(QWidget):
-    def __init__(self, title: str, theme: Theme, parent=None):
+
+class PageWidget(QFrame):
+    def __init__(self, title: str, theme: Theme, bg: QColor = None, parent=None):
         super().__init__(parent)
         self.theme = theme
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(20)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        title_color = _css_color(theme.text if theme.dark else theme.panel)
+        bg_color = bg if bg is not None else theme.bg
+        self._bg = QFrame(self)
+        self._bg.setFrameShape(QFrame.Shape.NoFrame)
+        self._bg.setStyleSheet(f"background-color: {_css_color(bg_color)};")
+        self._bg.setGeometry(self.rect())
+        self._bg.lower()
+        self.setAutoFillBackground(False)
+
+        layout = QVBoxLayout(self)
+        bottom = 0 if bg is not None and bg == theme.panel else 16
+        layout.setContentsMargins(16, 16, 16, bottom)
+        layout.setSpacing(14)
+
+        title_color = theme.text if bg_color.lightness() < 128 else theme.panel
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet(
-            f"color: {title_color}; font-size: 24px; font-weight: 600;"
+            f"color: {_css_color(title_color)}; font-size: 24px; font-weight: 600;"
         )
         layout.addWidget(title_lbl)
 
         self._body = QVBoxLayout()
-        self._body.setSpacing(16)
-        layout.addLayout(self._body)
-        layout.addStretch()
+        self._body.setSpacing(12)
+        layout.addLayout(self._body, 1)
 
-    def add_card(self, title: str, body: str):
-        card = Card(title, body, self.theme, self)
+    def add_card(self, title: str, body: str, callback=None):
+        card = Card(title, body, self.theme, self, callback=callback)
         card.setMinimumHeight(120)
-        self._body.addWidget(card)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._body.addWidget(card, 1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_bg"):
+            self._bg.setGeometry(self.rect())
 
 
 class SidebarPanel(QFrame):
@@ -208,27 +242,22 @@ class AgentWindow(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Title bar
+        # Title bar — thin; app name lives in the sidebar
         title_bar = QWidget()
-        title_bar.setFixedHeight(44)
+        title_bar.setFixedHeight(32)
         title_bar.setStyleSheet(f"background: {_css_color(theme.panel)};")
         title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(16, 0, 12, 0)
+        title_layout.setContentsMargins(12, 0, 12, 0)
         title_layout.setSpacing(8)
 
-        title_lbl = QLabel("Magnet Agent")
-        title_lbl.setStyleSheet(
-            f"color: {_css_color(theme.text)}; font-size: 14px; font-weight: 600;"
-        )
-        title_layout.addWidget(title_lbl)
         title_layout.addStretch()
 
         for symbol, cb in (("−", self.showMinimized), ("□", self._toggle_max_restore), ("×", self.close)):
             btn = QPushButton(symbol)
-            btn.setFixedSize(28, 28)
+            btn.setFixedSize(22, 22)
             btn.setStyleSheet(
                 f"QPushButton {{ background: transparent; color: {_css_color(theme.muted)}; "
-                f"border-radius: 6px; border: none; font-size: 14px; }}"
+                f"border-radius: 5px; border: none; font-size: 12px; }}"
                 f"QPushButton:hover {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; }}"
             )
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -239,7 +268,7 @@ class AgentWindow(QWidget):
 
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(20, 20, 0, 20)
+        body.setContentsMargins(20, 12, 0, 0)
         body.setSpacing(20)
 
         # Sidebar (detached floating panel)
@@ -248,14 +277,19 @@ class AgentWindow(QWidget):
         sidebar_layout.setContentsMargins(16, 16, 16, 16)
         sidebar_layout.setSpacing(12)
 
-        # Connection status
+        # Connection status + app name
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
         dot = QLabel("●")
         dot.setStyleSheet(f"color: {_css_color(theme.accent)}; font-size: 10px;")
+        title_lbl = QLabel("Magnet Agent")
+        title_lbl.setStyleSheet(
+            f"color: {_css_color(theme.text)}; font-size: 12px; font-weight: 600;"
+        )
         status_text = QLabel("Connected")
         status_text.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
         status_row.addWidget(dot)
+        status_row.addWidget(title_lbl)
         status_row.addWidget(status_text, alignment=Qt.AlignmentFlag.AlignVCenter)
         status_row.addStretch()
         sidebar_layout.addLayout(status_row)
@@ -265,14 +299,26 @@ class AgentWindow(QWidget):
         # Nav
         self._nav_btns = []
         self._stack = QStackedWidget()
-        views = [
-            ("Sessions", self._build_sessions_page()),
-            ("Commands", self._build_commands_page()),
-            ("Terminal", self._build_terminal_page()),
-            ("Settings", self._build_settings_page()),
-            ("Atlas Workstation", self._build_active_session_page()),
-        ]
-        for idx, (label, page) in enumerate(views):
+
+        # Container for indented active-session sub-buttons under Sessions
+        self._sessions_sub_container = QWidget()
+        self._sessions_sub_layout = QVBoxLayout(self._sessions_sub_container)
+        self._sessions_sub_layout.setContentsMargins(0, 0, 0, 0)
+        self._sessions_sub_layout.setSpacing(4)
+        self._sessions_sub_container.setStyleSheet("background: transparent;")
+        self._sessions_sub_container.hide()
+        self._session_sub_btn = None
+
+        sessions_page = self._build_sessions_page()
+        commands_page = self._build_commands_page()
+        terminal_page = self._build_terminal_page()
+        settings_page = self._build_settings_page()
+        active_page = self._build_active_session_page()
+        for p in (sessions_page, commands_page, terminal_page, settings_page, active_page):
+            self._stack.addWidget(p)
+
+        main_nav = ["Sessions", "Commands", "Terminal", "Settings"]
+        for idx, label in enumerate(main_nav):
             btn = QPushButton(label)
             btn.setStyleSheet(self._nav_stylesheet(idx == initial_view))
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -281,9 +327,13 @@ class AgentWindow(QWidget):
             btn.clicked.connect(lambda checked, i=idx: self._switch_view(i))
             self._nav_btns.append(btn)
             sidebar_layout.addWidget(btn)
-            self._stack.addWidget(page)
+            if label == "Sessions":
+                sidebar_layout.addWidget(self._sessions_sub_container)
 
-        self._switch_view(initial_view)
+        if initial_view == 4:
+            self._open_active_session("Atlas Workstation")
+        else:
+            self._switch_view(initial_view)
 
         sidebar_layout.addStretch()
 
@@ -309,10 +359,11 @@ class AgentWindow(QWidget):
 
         # Main content
         content = QWidget()
-        content.setStyleSheet(f"background: {_css_color(theme.bg)};")
+        content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
+        self._stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         content_layout.addWidget(self._stack, 1)
         body.addWidget(content, 1)
 
@@ -331,7 +382,11 @@ class AgentWindow(QWidget):
 
     def _build_sessions_page(self):
         page = PageWidget("Active Sessions", self.theme)
-        page.add_card("Atlas Workstation", "Online — Windows 11\nLast seen: just now")
+        page.add_card(
+            "Atlas Workstation",
+            "Online — Windows 11\nLast seen: just now",
+            callback=lambda: self._open_active_session("Atlas Workstation"),
+        )
         page.add_card("Studio Mac", "Online — macOS\nLast seen: 2m ago")
         return page
 
@@ -352,8 +407,32 @@ class AgentWindow(QWidget):
         page.add_card("Network", "Server endpoint and connection preferences.")
         return page
 
+    def _get_system_info(self) -> dict:
+        """Return a readable system-info snapshot for the connected client."""
+        info = {"OS": "Unknown", "RAM": "Unknown", "Disk": "Unknown"}
+        try:
+            info["OS"] = f"{platform.system()} {platform.release()} {platform.machine()}"
+        except Exception:
+            pass
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        parts = line.split()
+                        kb = int(parts[1])
+                        info["RAM"] = f"{kb / (1024 * 1024):.1f} GB"
+                        break
+        except Exception:
+            pass
+        try:
+            total, used, free = shutil.disk_usage(os.path.expanduser("~"))
+            info["Disk"] = f"{free // (2**30)} GB free / {total // (2**30)} GB total"
+        except Exception:
+            pass
+        return info
+
     def _build_active_session_page(self):
-        page = PageWidget("Atlas Workstation", self.theme)
+        page = PageWidget("Atlas Workstation", self.theme, bg=self.theme.panel)
 
         quick_row = QHBoxLayout()
         quick_row.setSpacing(8)
@@ -365,17 +444,43 @@ class AgentWindow(QWidget):
         quick_row.addStretch()
         page._body.addLayout(quick_row)
 
+        # System info bar
+        sys_info = self._get_system_info()
+        info_bar = QFrame()
+        info_bar.setStyleSheet(
+            f"background: {_css_color(self.theme.panel)}; border-radius: 10px; padding: 4px;"
+        )
+        info_layout = QHBoxLayout(info_bar)
+        info_layout.setContentsMargins(12, 8, 12, 8)
+        info_layout.setSpacing(16)
+        for key, value in sys_info.items():
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            lbl_key = QLabel(key)
+            lbl_key.setStyleSheet(f"color: {_css_color(self.theme.muted)}; font-size: 10px; font-weight: 600;")
+            lbl_val = QLabel(value)
+            lbl_val.setStyleSheet(f"color: {_css_color(self.theme.text)}; font-size: 12px;")
+            col.addWidget(lbl_key)
+            col.addWidget(lbl_val)
+            info_layout.addLayout(col)
+        info_layout.addStretch()
+        page._body.addWidget(info_bar)
+
         hbox = QHBoxLayout()
         hbox.setSpacing(20)
         hbox.setContentsMargins(0, 0, 0, 0)
 
         # Left column: file manager + manual commands button
-        left_col = QWidget()
+        left_col = QFrame()
+        left_col.setFrameShape(QFrame.Shape.NoFrame)
+        left_col.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_col.setStyleSheet(f"background: {_css_color(self.theme.panel)}; border-radius: 12px;")
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
         self._file_manager = FileManagerWindow(self.theme, "~")
+        self._file_manager.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left_layout.addWidget(self._file_manager, 1)
 
         manual_btn = QPushButton("Run manual Magnet commands")
@@ -391,6 +496,7 @@ class AgentWindow(QWidget):
         chat_panel, self._chat_output, self._chat_line = self._make_session_panel(
             "Chat", "Type a message...", "Atlas: ready for instructions.", self._on_chat_send
         )
+        chat_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         hbox.addWidget(left_col, 2)
         hbox.addWidget(chat_panel, 1)
 
@@ -523,11 +629,42 @@ class AgentWindow(QWidget):
         self._screenshot_window = ScreenshotWindow(self.theme)
         self._screenshot_window.show()
 
+    def _session_sub_stylesheet(self, active: bool) -> str:
+        t = self.theme
+        bg = _css_color(t.accent if active else t.panel)
+        fg = _css_color(t.text if active else t.muted)
+        hover = _css_color(t.hover)
+        return (
+            f"QPushButton {{ background: {bg}; color: {fg}; border: none; "
+            f"border-radius: 6px; padding: 8px 14px 8px 28px; font-size: 12px; text-align: left; }}"
+            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; }}"
+        )
+
+    def _make_session_sub_button(self, name: str) -> QPushButton:
+        btn = QPushButton(name)
+        btn.setCheckable(True)
+        btn.setStyleSheet(self._session_sub_stylesheet(False))
+        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn.clicked.connect(lambda checked: self._switch_view(4))
+        return btn
+
+    def _open_active_session(self, name: str):
+        if self._session_sub_btn is None:
+            self._session_sub_btn = self._make_session_sub_button(name)
+            self._sessions_sub_layout.addWidget(self._session_sub_btn)
+            self._sessions_sub_container.show()
+        self._switch_view(4)
+
     def _switch_view(self, index: int):
         self._stack.setCurrentIndex(index)
         for i, btn in enumerate(self._nav_btns):
-            btn.setChecked(i == index)
-            btn.setStyleSheet(self._nav_stylesheet(i == index))
+            active = i == index
+            btn.setChecked(active)
+            btn.setStyleSheet(self._nav_stylesheet(active))
+        if self._session_sub_btn is not None:
+            is_active = index == 4
+            self._session_sub_btn.setChecked(is_active)
+            self._session_sub_btn.setStyleSheet(self._session_sub_stylesheet(is_active))
 
     def _toggle_max_restore(self):
         if self.isMaximized():
@@ -651,7 +788,7 @@ class VisionWindow(QWidget):
             QLabel.keyPressEvent(self.video, event)
 
 
-class FileManagerWindow(QWidget):
+class FileManagerWindow(QFrame):
     """Agent-side remote file manager (.xnavigate)."""
 
     LOCATIONS = {}
@@ -661,7 +798,8 @@ class FileManagerWindow(QWidget):
         self.theme = theme
         self.setWindowTitle("File Manager — Atlas Workstation")
         self.resize(1000, 750)
-        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet(f"background: {_css_color(theme.panel)}; border-radius: 12px;")
         self.setAcceptDrops(True)
 
         self.feed_path = Path.home() / "MagnetOS" / "Incoming"
@@ -682,8 +820,8 @@ class FileManagerWindow(QWidget):
         self._clipboard = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
         # Toolbar
         toolbar = QHBoxLayout()
@@ -705,7 +843,8 @@ class FileManagerWindow(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Locations sidebar
-        locations_panel = QWidget()
+        locations_panel = QFrame()
+        locations_panel.setFrameShape(QFrame.Shape.NoFrame)
         locations_panel.setStyleSheet(
             f"background: {_css_color(theme.panel)}; border-radius: 12px;"
         )
@@ -721,17 +860,24 @@ class FileManagerWindow(QWidget):
 
         self.locations = QListWidget()
         self.locations.setStyleSheet(
-            f"QListWidget {{ background: transparent; color: {_css_color(theme.text)}; border: none; }}"
-            f"QListWidget::item {{ padding: 6px; border-radius: 4px; }}"
-            f"QListWidget::item:selected {{ background: {_css_color(theme.accent)}; }}"
-            f"QListWidget::item:hover {{ background: {_css_color(theme.hover)}; }}"
+            f"QListView::item {{ padding: 6px; border-radius: 4px; background: transparent; }}"
+            f"QListView::item:selected {{ background: {_css_color(theme.accent)}; }}"
+            f"QListView::item:hover {{ background: {_css_color(theme.hover)}; }}"
         )
+        loc_palette = self.locations.palette()
+        loc_palette.setColor(QPalette.Base, theme.panel)
+        loc_palette.setColor(QPalette.Text, theme.text)
+        self.locations.setPalette(loc_palette)
+        self.locations.setAutoFillBackground(True)
+        self.locations.viewport().setPalette(loc_palette)
+        self.locations.viewport().setAutoFillBackground(True)
         self.locations.itemClicked.connect(self._location_clicked)
         locations_layout.addWidget(self.locations, 1)
         splitter.addWidget(locations_panel)
 
         # Files view
-        files_panel = QWidget()
+        files_panel = QFrame()
+        files_panel.setFrameShape(QFrame.Shape.NoFrame)
         files_panel.setStyleSheet(
             f"background: {_css_color(theme.panel)}; border-radius: 12px;"
         )
@@ -767,11 +913,18 @@ class FileManagerWindow(QWidget):
         self.files = QTreeWidget()
         self.files.setHeaderLabels(["Name", "Size", "Modified"])
         self.files.setStyleSheet(
-            f"QTreeWidget {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 8px; }}"
-            f"QTreeWidget::item {{ padding: 6px; }}"
-            f"QTreeWidget::item:selected {{ background: {_css_color(theme.accent)}; }}"
+            f"QTreeView::item {{ padding: 6px; background: transparent; }}"
+            f"QTreeView::item:selected {{ background: {_css_color(theme.accent)}; }}"
+            f"QHeaderView::section {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; padding: 6px; font-weight: 600; }}"
         )
+        files_palette = self.files.palette()
+        files_palette.setColor(QPalette.Base, theme.hover)
+        files_palette.setColor(QPalette.Text, theme.text)
+        self.files.setPalette(files_palette)
+        self.files.setAutoFillBackground(True)
+        self.files.viewport().setPalette(files_palette)
+        self.files.viewport().setAutoFillBackground(True)
         self.files.setColumnWidth(0, 320)
         self.files.header().setStretchLastSection(False)
         self.files.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -786,6 +939,10 @@ class FileManagerWindow(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([200, 700])
+        splitter.setStyleSheet(
+            f"QSplitter::handle {{ background: {_css_color(theme.hover)}; }}"
+            f"QSplitter::handle:horizontal {{ width: 4px; }}"
+        )
         layout.addWidget(splitter, 1)
 
         # Status
