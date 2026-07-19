@@ -54,10 +54,10 @@ class FlyoutPanel(QWidget):
         # Header: brand glyph + title
         header_layout = QHBoxLayout()
         header_layout.setSpacing(10)
-        self._glyph = GlyphRenderer(size=22)
+        self._glyph = GlyphRenderer(size=40)
         self._glyph.set_state("idle")
         self._glyph_lbl = QLabel()
-        self._glyph_lbl.setFixedSize(22, 22)
+        self._glyph_lbl.setFixedSize(40, 40)
         self._glyph_lbl.setPixmap(self._glyph.pixmap(self.theme, color=self.theme.glyph))
         header_layout.addWidget(self._glyph_lbl)
         self._title = QLabel("Magnet Client")
