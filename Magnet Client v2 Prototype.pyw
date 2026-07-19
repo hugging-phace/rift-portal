@@ -51,21 +51,22 @@ class FlyoutPanel(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        # Header: brand glyph + title
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(10)
-        self._glyph = GlyphRenderer(size=40)
+        # Header: centered brand glyph above title for instant recognition.
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(8)
+        header_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._glyph = GlyphRenderer(size=56)
         self._glyph.set_state("idle")
         self._glyph_lbl = QLabel()
-        self._glyph_lbl.setFixedSize(40, 40)
+        self._glyph_lbl.setFixedSize(56, 56)
         self._glyph_lbl.setPixmap(self._glyph.pixmap(self.theme, color=self.theme.glyph))
-        header_layout.addWidget(self._glyph_lbl)
+        header_layout.addWidget(self._glyph_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
         self._title = QLabel("Magnet Client")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setStyleSheet(
             f"color: {_css_color(self.theme.text)}; font-size: 18px; font-weight: 600;"
         )
-        header_layout.addWidget(self._title, alignment=Qt.AlignmentFlag.AlignVCenter)
-        header_layout.addStretch()
+        header_layout.addWidget(self._title, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addLayout(header_layout)
 
         status_layout = QHBoxLayout()
