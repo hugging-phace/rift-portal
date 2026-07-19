@@ -18,7 +18,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QStackedWidget, QFrame, QSizePolicy,
+    QStackedWidget, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
 )
 
 
@@ -90,6 +90,32 @@ class PageWidget(QWidget):
         self._body.addWidget(card)
 
 
+class SidebarPanel(QFrame):
+    """A detached, floating sidebar panel with rounded corners and a soft shadow."""
+
+    def __init__(self, theme: Theme, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(260)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self._apply_theme(theme)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 6)
+        self.setGraphicsEffect(shadow)
+
+    def _apply_theme(self, theme: Theme):
+        border = QColor(
+            theme.muted.red(), theme.muted.green(), theme.muted.blue(), 55
+        )
+        self.setStyleSheet(
+            f"background: {_css_color(theme.panel)}; "
+            f"border: 1px solid {_css_color(border)}; "
+            f"border-radius: 18px;"
+        )
+
+
 # ------------------------------------------------------------------
 # State control dialog
 # ------------------------------------------------------------------
@@ -145,6 +171,10 @@ class AgentWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(1100, 720)
         self.setMinimumSize(900, 560)
+        self.setAutoFillBackground(True)
+        palette = self.palette()
+        palette.setColor(self.backgroundRole(), theme.bg)
+        self.setPalette(palette)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -181,13 +211,11 @@ class AgentWindow(QWidget):
 
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setContentsMargins(20, 20, 0, 20)
+        body.setSpacing(20)
 
-        # Sidebar
-        sidebar = QWidget()
-        sidebar.setFixedWidth(260)
-        sidebar.setStyleSheet(f"background: {_css_color(theme.panel)};")
+        # Sidebar (detached floating panel)
+        sidebar = SidebarPanel(self.theme)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(16, 16, 16, 16)
         sidebar_layout.setSpacing(12)
