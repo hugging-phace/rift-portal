@@ -11,11 +11,12 @@ existing Magnet Agent backend.
 """
 
 import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal, QUrl
+from PySide6.QtCore import Qt, QTimer, Signal, QUrl, QProcess
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QBrush, QPen, QCursor, QMouseEvent,
     QDesktopServices,
@@ -368,20 +369,24 @@ class AgentWindow(QWidget):
         hbox.setSpacing(20)
         hbox.setContentsMargins(0, 0, 0, 0)
 
-        # Left column: small command box + large tools (xnavigate/xterminal)
+        # Left column: tools (xnavigate/xterminal) + manual commands button
         left_col = QWidget()
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        cmd_panel, self._cmd_output, self._cmd_line = self._make_session_panel(
-            "Commands", "Type a command...", "> awaiting command...", self._on_command_send
-        )
-        cmd_panel.setMaximumHeight(180)
-        left_layout.addWidget(cmd_panel)
-
         tools_panel = self._build_tools_panel()
         left_layout.addWidget(tools_panel, 1)
+
+        manual_btn = QPushButton("Run manual Magnet commands")
+        manual_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        manual_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(self.theme.hover)}; color: {_css_color(self.theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 8px 14px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(self.theme.accent)}; }}"
+        )
+        manual_btn.clicked.connect(self._open_command_window)
+        left_layout.addWidget(manual_btn)
 
         chat_panel, self._chat_output, self._chat_line = self._make_session_panel(
             "Chat", "Type a message...", "Atlas: ready for instructions.", self._on_chat_send
@@ -458,6 +463,9 @@ class AgentWindow(QWidget):
             self._open_file_manager()
         elif action == "Terminal":
             self._open_terminal()
+        elif action == "Feed":
+            self._switch_tool(0)
+            self._file_manager._load_path(self._file_manager.feed_path)
         else:
             self.set_status(action.lower())
 
@@ -514,32 +522,39 @@ class AgentWindow(QWidget):
 
         return panel, output, line
 
-    def _on_command_send(self, line: QLineEdit, output: QTextEdit):
-        text = line.text().strip()
-        line.clear()
-        if not text:
-            return
-        output.append(f"> {text}")
-        lower = text.lower()
-        if lower.startswith(".xnavigate"):
-            path = text[10:].strip() or "~"
-            self._switch_tool(0)
-            self._file_manager._load_path(Path(os.path.expanduser(path)))
-            output.append(f"Opened xnavigate: {path}")
-        elif lower.startswith(".xterminal") or lower == ".terminal":
-            self._switch_tool(1)
-            self._terminal.output.append(f"> {text}")
-            output.append("Opened xterminal")
-        elif lower.startswith(".vision"):
-            self._open_vision()
-        else:
-            output.append(f"Sent to Atlas Workstation: {text}")
-
     def _on_chat_send(self, line: QLineEdit, output: QTextEdit):
         text = line.text().strip()
         line.clear()
         if text:
             output.append(f"You: {text}")
+
+    def _open_command_window(self):
+        self._command_window = CommandWindow(self.theme, self)
+        self._command_window.show()
+
+    def _run_magnet_command(self, cmd: str) -> str:
+        lower = cmd.lower().strip()
+        if lower.startswith(".xnavigate"):
+            path = cmd[10:].strip() or "~"
+            self._switch_tool(0)
+            self._file_manager._load_path(Path(os.path.expanduser(path)))
+            return f"Opened xnavigate: {path}"
+        elif lower.startswith(".xterminal") or lower == ".terminal":
+            self._switch_tool(1)
+            self._terminal.output.append(f"> {cmd}")
+            return "Opened xterminal"
+        elif lower.startswith(".vision"):
+            self._open_vision()
+            return "Opened Vision"
+        elif lower.startswith(".screenshot"):
+            self._open_screenshot()
+            return "Opened Screenshot"
+        elif lower.startswith(".feed"):
+            self._switch_tool(0)
+            self._file_manager._load_path(self._file_manager.feed_path)
+            return "Opened Feed / Incoming location"
+        else:
+            return f"Sent to Atlas Workstation: {cmd}"
 
     def _open_vision(self):
         self._vision_window = VisionWindow(self.theme)
@@ -688,16 +703,7 @@ class VisionWindow(QWidget):
 class FileManagerWindow(QWidget):
     """Agent-side remote file manager (.xnavigate)."""
 
-    LOCATIONS = {
-        "Home": Path.home(),
-        "Desktop": Path.home() / "Desktop",
-        "Documents": Path.home() / "Documents",
-        "Downloads": Path.home() / "Downloads",
-        "Pictures": Path.home() / "Pictures",
-        "Videos": Path.home() / "Videos",
-        "Dropbox": Path.home() / "Dropbox",
-        "OneDrive": Path.home() / "OneDrive",
-    }
+    LOCATIONS = {}
 
     def __init__(self, theme: Theme, path: str = "~", parent=None):
         super().__init__(parent)
@@ -706,6 +712,20 @@ class FileManagerWindow(QWidget):
         self.resize(1000, 750)
         self.setStyleSheet(f"background: {_css_color(theme.bg)};")
         self.setAcceptDrops(True)
+
+        self.feed_path = Path.home() / "MagnetOS" / "Incoming"
+        self.feed_path.mkdir(parents=True, exist_ok=True)
+        self.LOCATIONS = {
+            "Feed / Incoming": self.feed_path,
+            "Home": Path.home(),
+            "Desktop": Path.home() / "Desktop",
+            "Documents": Path.home() / "Documents",
+            "Downloads": Path.home() / "Downloads",
+            "Pictures": Path.home() / "Pictures",
+            "Videos": Path.home() / "Videos",
+            "Dropbox": Path.home() / "Dropbox",
+            "OneDrive": Path.home() / "OneDrive",
+        }
 
         self.current_path = Path(os.path.expanduser(path))
         self._clipboard = None
@@ -1043,6 +1063,7 @@ class TerminalWindow(QWidget):
     def __init__(self, theme: Theme, parent=None):
         super().__init__(parent)
         self.theme = theme
+        self._cwd = str(Path.home())
         self.setWindowTitle("Terminal — Atlas Workstation")
         self.resize(900, 600)
         self.setStyleSheet(f"background: {_css_color(theme.bg)};")
@@ -1078,7 +1099,8 @@ class TerminalWindow(QWidget):
         )
         self.output.setText(
             "Remote terminal connected to Atlas Workstation.\n"
-            "Type commands below to run them silently on the client.\n"
+            "Type shell commands below (cd, pip, ls, etc.).\n"
+            "In production these execute silently on the client.\n"
         )
         layout.addWidget(self.output, 1)
 
@@ -1108,12 +1130,44 @@ class TerminalWindow(QWidget):
         self.input.clear()
         if not cmd:
             return
-        self.output.append(f"> {cmd}")
-        # Stub: real execution would run on the client silently via the agent backend.
-        self.output.append(f"[remote] {cmd}")
+        self.output.append(f"{self._cwd}> {cmd}")
+
+        if cmd.lower().startswith("cd "):
+            target = cmd[3:].strip()
+            new_path = Path(target).expanduser()
+            if not new_path.is_absolute():
+                new_path = Path(self._cwd) / new_path
+            new_path = new_path.resolve()
+            if new_path.is_dir():
+                self._cwd = str(new_path)
+                self.output.append(f"[cwd {self._cwd}]")
+            else:
+                self.output.append(f"cd: {new_path}: No such directory")
+            return
+
+        try:
+            result = subprocess.run(
+                cmd, shell=True, cwd=self._cwd, capture_output=True, text=True, timeout=30
+            )
+            out = result.stdout.strip()
+            err = result.stderr.strip()
+            if out:
+                self.output.append(out)
+            if err:
+                self.output.append(err)
+            if result.returncode != 0 and not err:
+                self.output.append(f"Exit code: {result.returncode}")
+        except subprocess.TimeoutExpired:
+            self.output.append("Command timed out after 30 seconds.")
+        except Exception as e:
+            self.output.append(f"Error: {e}")
 
     def _clear(self):
-        self.output.setText("Remote terminal connected to Atlas Workstation.\n")
+        self.output.setText(
+            "Remote terminal connected to Atlas Workstation.\n"
+            "Type shell commands below (cd, pip, ls, etc.).\n"
+            "In production these execute silently on the client.\n"
+        )
 
 
 class ScreenshotWindow(QWidget):
@@ -1162,6 +1216,108 @@ class ScreenshotWindow(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save Screenshot", "atlas_screenshot.png")
         if path:
             self.image.setText(f"Saved to {path}")
+
+
+class CommandWindow(QWidget):
+    """Pop-out window for classic Magnet commands (.screenshot, .feed, etc.)."""
+
+    def __init__(self, theme: Theme, agent=None, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.agent = agent
+        self.setWindowTitle("Manual Commands — Atlas Workstation")
+        self.resize(600, 500)
+        self.setStyleSheet(f"background: {_css_color(theme.bg)};")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        title = QLabel("Manual Magnet Commands")
+        title.setStyleSheet(
+            f"color: {_css_color(theme.panel)}; font-size: 18px; font-weight: 600;"
+        )
+        header.addWidget(title)
+        header.addStretch()
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        clear_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
+        )
+        clear_btn.clicked.connect(self._clear)
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
+
+        # Quick command chips
+        chips = QHBoxLayout()
+        chips.setSpacing(8)
+        for label in (".screenshot", ".feed", ".pause", ".pulse", ".vision", ".xnavigate"):
+            btn = QPushButton(label)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+                f"border: none; border-radius: 6px; padding: 5px 10px; font-size: 11px; }}"
+                f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
+            )
+            btn.clicked.connect(lambda checked=False, c=label: self._send(c))
+            chips.addWidget(btn)
+        chips.addStretch()
+        layout.addLayout(chips)
+
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setStyleSheet(
+            f"QTextEdit {{ background: {_css_color(theme.panel)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 12px; padding: 10px; font-family: monospace; }}"
+        )
+        self.output.setText("Enter a classic Magnet command below.\n")
+        layout.addWidget(self.output, 1)
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(8)
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Type .screenshot, .feed, .xnavigate, etc.")
+        self.input.setStyleSheet(
+            f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 6px; font-family: monospace; }}"
+        )
+        self.input.returnPressed.connect(self._send_from_input)
+        run_btn = QPushButton("Run")
+        run_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        run_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.text)}; "
+            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.hover)}; }}"
+        )
+        run_btn.clicked.connect(self._send_from_input)
+        input_row.addWidget(self.input, 1)
+        input_row.addWidget(run_btn)
+        layout.addLayout(input_row)
+
+    def _send_from_input(self):
+        cmd = self.input.text().strip()
+        self.input.clear()
+        self._send(cmd)
+
+    def _send(self, cmd: str):
+        if not cmd:
+            return
+        self.output.append(f"> {cmd}")
+        if self.agent:
+            try:
+                result = self.agent._run_magnet_command(cmd)
+                self.output.append(result)
+            except Exception as e:
+                self.output.append(f"Error: {e}")
+        else:
+            self.output.append(f"Sent to Atlas Workstation: {cmd}")
+
+    def _clear(self):
+        self.output.setText("Enter a classic Magnet command below.\n")
 
 
 # ------------------------------------------------------------------
