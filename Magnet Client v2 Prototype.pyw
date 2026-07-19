@@ -51,11 +51,22 @@ class FlyoutPanel(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
+        # Header: brand glyph + title
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(10)
+        self._glyph = GlyphRenderer(size=22)
+        self._glyph.set_state("idle")
+        self._glyph_lbl = QLabel()
+        self._glyph_lbl.setFixedSize(22, 22)
+        self._glyph_lbl.setPixmap(self._glyph.pixmap(self.theme, color=self.theme.glyph))
+        header_layout.addWidget(self._glyph_lbl)
         self._title = QLabel("Magnet Client")
         self._title.setStyleSheet(
             f"color: {_css_color(self.theme.text)}; font-size: 18px; font-weight: 600;"
         )
-        layout.addWidget(self._title)
+        header_layout.addWidget(self._title, alignment=Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
 
         status_layout = QHBoxLayout()
         status_layout.setSpacing(6)
@@ -148,6 +159,8 @@ class FlyoutPanel(QWidget):
         self._status_text.setText(labels.get(state, state.capitalize()))
         dot_color = self.theme.muted if state == "disconnected" else self.theme.accent
         self._status_dot.setStyleSheet(f"color: {_css_color(dot_color)}; font-size: 10px;")
+        self._glyph.set_state(state)
+        self._glyph_lbl.setPixmap(self._glyph.pixmap(self.theme, color=self.theme.glyph))
 
     def apply_theme(self, theme: Theme):
         self.theme = theme
@@ -155,6 +168,7 @@ class FlyoutPanel(QWidget):
             f"color: {_css_color(theme.text)}; font-size: 18px; font-weight: 600;"
         )
         self._status_text.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
+        self._glyph_lbl.setPixmap(self._glyph.pixmap(self.theme, color=self.theme.glyph))
         for btn in self._buttons:
             btn.setStyleSheet(self._button_stylesheet())
         self._chat.setStyleSheet(
