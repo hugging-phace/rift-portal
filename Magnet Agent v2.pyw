@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from magnet_v2_theme import apply_global_styles, backend_reset_stylesheet
+
 # ------------------------------------------------------------------
 # Load the v2 UI shell and the production backend from their .pyw files
 # ------------------------------------------------------------------
@@ -59,16 +61,19 @@ SettingsView = _backend.SettingsView
 # Helpers
 # ------------------------------------------------------------------
 class BackendPage(PageWidget):
-    """A PageWidget with the title hidden so the wrapped view can provide its own."""
+    """A PageWidget with the title hidden and a style reset for legacy backend widgets."""
 
     def __init__(self, theme: Theme, bg: QColor = None, parent=None):
         super().__init__("", theme, bg, parent)
+        self.setObjectName("backendPage")
         # Hide the default title label so the embedded backend view is the full page.
         top_item = self.layout().itemAt(0)
         if top_item is not None:
             title_lbl = top_item.widget()
             if title_lbl is not None:
                 title_lbl.setVisible(False)
+        # Reset backend widgets to the v2 palette while keeping the page container style.
+        self.setStyleSheet(backend_reset_stylesheet(theme))
 
 
 class _OrbAdapter:
@@ -375,7 +380,8 @@ def main():
     app.setApplicationName("Magnet Agent")
 
     # Force the light pale-navy theme by default.
-    theme = _make_agent_theme(not True and _is_dark_mode(app))
+    theme = _make_agent_theme(False)
+    apply_global_styles(app, theme)
     glyph = GlyphRenderer(size=160)
     glyph.set_state("idle")
 

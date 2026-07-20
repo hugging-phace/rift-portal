@@ -42,21 +42,14 @@ from PySide6.QtWidgets import (
 
 
 from magnet_v2_glyph import Theme, GlyphRenderer, _is_dark_mode, _css_color
+from magnet_v2_theme import apply_global_styles, apply_shadow, animate_shadow
 
 
 def _make_agent_theme(dark: bool) -> Theme:
-    """Return an agent theme with a premium light/dark navy palette."""
+    """Return an agent theme with the modern MagnetOS v2 palette."""
     t = Theme(dark)
     if not dark:
-        # Light mode: pale navy background with dark soft navy panels.
         t.bg = QColor(232, 240, 250)
-        t.panel = QColor(44, 60, 88)
-        t.text = QColor(248, 250, 252)
-        t.muted = QColor(168, 182, 202)
-        t.accent = QColor(95, 135, 255)
-        t.glyph = QColor(190, 210, 255)
-        t.glyph_tray = QColor(32, 38, 52)
-        t.hover = QColor(58, 78, 112)
     return t
 
 
@@ -97,7 +90,7 @@ class Card(QFrame):
         self.theme = theme
         self.callback = callback
         self.setStyleSheet(
-            f"background: {_css_color(theme.panel)}; border-radius: 12px;"
+            f"background: {_css_color(theme.panel)}; border: 1px solid {_css_color(theme.border)}; border-radius: 14px;"
         )
         if callback:
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -124,11 +117,15 @@ class Card(QFrame):
             )
             layout.addWidget(open_lbl)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(18)
-        shadow.setColor(QColor(0, 0, 0, 70))
-        shadow.setOffset(0, 4)
-        self.setGraphicsEffect(shadow)
+        apply_shadow(self, theme)
+
+    def enterEvent(self, event):
+        animate_shadow(self, self.theme, hover=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        animate_shadow(self, self.theme, hover=False)
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
         if self.callback:
@@ -143,7 +140,7 @@ class FormCard(QFrame):
         super().__init__(parent)
         self.theme = theme
         self.setStyleSheet(
-            f"background: {_css_color(theme.panel)}; border-radius: 12px;"
+            f"background: {_css_color(theme.panel)}; border: 1px solid {_css_color(theme.border)}; border-radius: 14px;"
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
@@ -159,11 +156,15 @@ class FormCard(QFrame):
         self._body.setSpacing(10)
         layout.addLayout(self._body, 1)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(18)
-        shadow.setColor(QColor(0, 0, 0, 70))
-        shadow.setOffset(0, 4)
-        self.setGraphicsEffect(shadow)
+        apply_shadow(self, theme)
+
+    def enterEvent(self, event):
+        animate_shadow(self, self.theme, hover=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        animate_shadow(self, self.theme, hover=False)
+        super().leaveEvent(event)
 
     def add_row(self, widget):
         self._body.addWidget(widget)
@@ -181,17 +182,16 @@ class PageWidget(QFrame):
 
         bg_color = bg if bg is not None else theme.bg
         self._bg = QFrame(self)
+        self._bg.setObjectName("pageBg")
         self._bg.setFrameShape(QFrame.Shape.NoFrame)
         self._bg.setStyleSheet(
-            f"background-color: {_css_color(bg_color)}; border-radius: 18px;"
+            f"background-color: {_css_color(bg_color)}; border: 1px solid {_css_color(theme.border)}; border-radius: 18px;"
         )
         self._bg.setGeometry(self.rect())
         self._bg.lower()
         self.setAutoFillBackground(False)
 
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(1.0)
-        self.setGraphicsEffect(self._opacity)
+        apply_shadow(self._bg, theme, blur=22, offset=(0, 6), alpha=50)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 24)
@@ -215,20 +215,12 @@ class PageWidget(QFrame):
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._body.addWidget(card, 0)
 
-    def _animate_opacity(self, start, end, duration=220):
-        self._opacity_anim = QPropertyAnimation(self._opacity, b"opacity")
-        self._opacity_anim.setDuration(duration)
-        self._opacity_anim.setStartValue(start)
-        self._opacity_anim.setEndValue(end)
-        self._opacity_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._opacity_anim.start()
-
     def fade_in(self, duration=220):
-        self._opacity.setOpacity(0.0)
-        self._animate_opacity(0.0, 1.0, duration)
+        # Page cross-fade disabled: shadows and opacity effects cannot be nested.
+        pass
 
     def fade_out(self, duration=160):
-        self._animate_opacity(1.0, 0.0, duration)
+        pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -245,15 +237,12 @@ class SidebarPanel(QFrame):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._apply_theme(theme)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setColor(QColor(0, 0, 0, 85))
-        shadow.setOffset(4, 4)
-        self.setGraphicsEffect(shadow)
+        apply_shadow(self, theme, blur=26, offset=(6, 4), alpha=55)
 
     def _apply_theme(self, theme: Theme):
         self.setStyleSheet(
             f"background: {_css_color(theme.panel)}; "
+            f"border: 1px solid {_css_color(theme.border)}; "
             f"border-radius: 18px;"
         )
 
@@ -270,13 +259,13 @@ class StateControlDialog(QWidget):
         self.theme = theme
         self.setStyleSheet(f"background: {_css_color(theme.bg)};")
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         self._buttons = []
         for state in GlyphRenderer.STATES:
             btn = QPushButton(state.replace("_", " ").title())
-            btn.setStyleSheet(self._button_stylesheet())
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn.clicked.connect(lambda checked=False, s=state: self.state_changed.emit(s))
             self._buttons.append(btn)
             layout.addWidget(btn)
@@ -284,19 +273,6 @@ class StateControlDialog(QWidget):
     def apply_theme(self, theme: Theme):
         self.theme = theme
         self.setStyleSheet(f"background: {_css_color(theme.bg)};")
-        for btn in self._buttons:
-            btn.setStyleSheet(self._button_stylesheet())
-
-    def _button_stylesheet(self) -> str:
-        t = self.theme
-        bg = _css_color(t.panel)
-        hover = _css_color(t.hover)
-        text = _css_color(t.text)
-        return (
-            f"QPushButton {{ background: {bg}; color: {text}; border: none; "
-            f"border-radius: 6px; padding: 8px 12px; font-size: 12px; }}"
-            f"QPushButton:hover {{ background: {hover}; }}"
-        )
 
 
 # ------------------------------------------------------------------
@@ -326,19 +302,22 @@ class AgentWindow(QWidget):
         # Title bar — thin; app name lives in the sidebar
         title_bar = QWidget()
         title_bar.setFixedHeight(32)
-        title_bar.setStyleSheet(f"background: {_css_color(theme.panel)};")
+        title_bar.setStyleSheet(
+            f"background: {_css_color(theme.surface)}; "
+            f"border-bottom: 1px solid {_css_color(theme.border)};"
+        )
         title_layout = QHBoxLayout(title_bar)
         title_layout.setContentsMargins(12, 0, 12, 0)
-        title_layout.setSpacing(8)
+        title_layout.setSpacing(6)
 
         title_layout.addStretch()
 
         for symbol, cb in (("−", self.showMinimized), ("□", self._toggle_max_restore), ("×", self.close)):
             btn = QPushButton(symbol)
-            btn.setFixedSize(22, 22)
+            btn.setFixedSize(24, 24)
             btn.setStyleSheet(
                 f"QPushButton {{ background: transparent; color: {_css_color(theme.muted)}; "
-                f"border-radius: 5px; border: none; font-size: 12px; }}"
+                f"border-radius: 6px; border: none; font-size: 13px; }}"
                 f"QPushButton:hover {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; }}"
             )
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -454,12 +433,13 @@ class AgentWindow(QWidget):
     def _nav_stylesheet(self, active: bool) -> str:
         t = self.theme
         bg = _css_color(t.accent if active else t.panel)
-        fg = _css_color(t.text if active else t.muted)
+        fg = _css_color(t.on_accent if active else t.text)
+        border = _css_color(t.accent if active else t.border)
         hover = _css_color(t.hover)
         return (
-            f"QPushButton {{ background: {bg}; color: {fg}; border: none; "
-            f"border-radius: 8px; padding: 10px 14px; font-size: 13px; text-align: left; }}"
-            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; }}"
+            f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {border}; "
+            f"border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 600; text-align: left; }}"
+            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; border: 1px solid {_css_color(t.accent)}; }}"
         )
 
     def _build_sessions_page(self):
@@ -974,12 +954,13 @@ class AgentWindow(QWidget):
     def _session_sub_stylesheet(self, active: bool) -> str:
         t = self.theme
         bg = _css_color(t.accent if active else t.panel)
-        fg = _css_color(t.text if active else t.muted)
+        fg = _css_color(t.on_accent if active else t.text)
+        border = _css_color(t.accent if active else t.border)
         hover = _css_color(t.hover)
         return (
-            f"QPushButton {{ background: {bg}; color: {fg}; border: none; "
-            f"border-radius: 6px; padding: 8px 14px 8px 28px; font-size: 12px; text-align: left; }}"
-            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; }}"
+            f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {border}; "
+            f"border-radius: 8px; padding: 8px 14px 8px 28px; font-size: 12px; font-weight: 600; text-align: left; }}"
+            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; border: 1px solid {_css_color(t.accent)}; }}"
         )
 
     def _make_session_sub_button(self, name: str) -> QPushButton:
@@ -1889,7 +1870,7 @@ class MagnetAgentPrototype(QApplication):
 
         self.theme = _make_agent_theme(not force_light and _is_dark_mode(self))
         self._initial_view = initial_view
-        self._apply_scroll_style()
+        apply_global_styles(self, self.theme)
         try:
             self.styleHints().colorSchemeChanged.connect(self._theme_changed)
         except Exception:
@@ -1916,24 +1897,11 @@ class MagnetAgentPrototype(QApplication):
         self.window._glyph_lbl.refresh()
 
     def _theme_changed(self):
-        self.theme = Theme(_is_dark_mode(self))
-        self._apply_scroll_style()
+        self.theme = _make_agent_theme(_is_dark_mode(self))
+        apply_global_styles(self, self.theme)
         self.window._glyph_lbl.theme = self.theme
         self.window._glyph_lbl.refresh()
         self._control.apply_theme(self.theme)
-
-    def _apply_scroll_style(self):
-        t = self.theme
-        self.setStyleSheet(
-            "QScrollBar:vertical { background: " + _css_color(t.hover) + "; width: 8px; border-radius: 4px; }"
-            "QScrollBar::handle:vertical { background: " + _css_color(t.accent) + "; border-radius: 4px; min-height: 24px; }"
-            "QScrollBar::handle:vertical:hover { background: " + _css_color(t.text) + "; }"
-            "QScrollBar:horizontal { background: " + _css_color(t.hover) + "; height: 8px; border-radius: 4px; }"
-            "QScrollBar::handle:horizontal { background: " + _css_color(t.accent) + "; border-radius: 4px; min-width: 24px; }"
-            "QScrollBar::handle:horizontal:hover { background: " + _css_color(t.text) + "; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, "
-            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; height: 0px; }"
-        )
 
     def set_state(self, state: str):
         self.glyph.set_state(state)

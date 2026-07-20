@@ -36,28 +36,51 @@ def _css_color(c: QColor) -> str:
 
 
 class Theme:
+    """Unified MagnetOS v2 color and spacing design tokens."""
+
     def __init__(self, dark: bool):
         self.dark = dark
         if dark:
-            self.bg = QColor(10, 10, 12)
-            self.panel = QColor(22, 22, 28)
-            self.text = QColor(245, 245, 247)
-            self.muted = QColor(130, 130, 145)
-            self.accent = QColor(115, 103, 255)
-            # In-app accent glyph color
+            self.bg = QColor(16, 20, 30)
+            self.bg_secondary = QColor(24, 30, 44)
+            self.panel = QColor(30, 38, 56)
+            self.surface = QColor(40, 50, 72)
+            self.elevated = QColor(50, 62, 88)
+            self.border = QColor(70, 90, 130, 120)
+            self.shadow = QColor(0, 0, 0, 55)
+            self.text = QColor(245, 248, 252)
+            self.muted = QColor(150, 165, 190)
+            self.accent = QColor(95, 135, 255)
+            self.accent_hover = QColor(125, 160, 255)
+            self.on_accent = QColor(255, 255, 255)
             self.glyph = QColor(190, 210, 255)
-            # Tray/menu-bar color: white/light on dark taskbar
             self.glyph_tray = QColor(245, 245, 247)
-            self.hover = QColor(34, 34, 42)
+            self.hover = QColor(44, 56, 82)
+            self.success = QColor(40, 210, 120)
+            self.warning = QColor(250, 180, 60)
+            self.error = QColor(245, 100, 100)
         else:
-            self.bg = QColor(245, 245, 247)
-            self.panel = QColor(255, 255, 255)
-            self.text = QColor(30, 30, 35)
-            self.muted = QColor(110, 110, 120)
-            self.accent = QColor(115, 103, 255)
-            self.glyph = QColor(60, 80, 120)
-            self.glyph_tray = QColor(30, 30, 35)
-            self.hover = QColor(235, 235, 240)
+            self.bg = QColor(232, 240, 250)
+            self.bg_secondary = QColor(220, 230, 244)
+            self.panel = QColor(36, 50, 74)
+            self.surface = QColor(50, 68, 98)
+            self.elevated = QColor(64, 84, 118)
+            self.border = QColor(90, 120, 170, 140)
+            self.shadow = QColor(24, 40, 70, 55)
+            self.text = QColor(248, 250, 252)
+            self.muted = QColor(165, 182, 205)
+            self.accent = QColor(95, 135, 255)
+            self.accent_hover = QColor(125, 160, 255)
+            self.on_accent = QColor(255, 255, 255)
+            self.glyph = QColor(190, 210, 255)
+            self.glyph_tray = QColor(32, 40, 58)
+            self.hover = QColor(58, 78, 110)
+            self.success = QColor(40, 200, 110)
+            self.warning = QColor(235, 170, 50)
+            self.error = QColor(235, 90, 90)
+
+    def css(self, color: QColor) -> str:
+        return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alphaF():.3f})"
 
 
 # ------------------------------------------------------------------
