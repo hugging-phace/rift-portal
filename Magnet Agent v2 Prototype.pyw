@@ -18,7 +18,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QUrl, QProcess
+from PySide6.QtCore import (
+    Qt, QPoint, QPointF, QTimer, Signal, QUrl, QProcess,
+    QPropertyAnimation, QSequentialAnimationGroup, QParallelAnimationGroup,
+    QEasingCurve,
+)
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QBrush, QPen, QCursor, QMouseEvent,
     QDesktopServices, QPalette,
@@ -26,7 +30,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QStackedWidget, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
-    QLineEdit, QTextEdit, QListWidget, QListWidgetItem, QMessageBox,
+    QGraphicsOpacityEffect, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
+    QMessageBox,
     QTreeWidget, QTreeWidgetItem, QSplitter, QFileDialog, QMenu,
     QHeaderView,
 )
@@ -49,6 +54,20 @@ def _make_agent_theme(dark: bool) -> Theme:
         t.glyph_tray = QColor(32, 38, 52)
         t.hover = QColor(58, 78, 112)
     return t
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+def _fade_show(widget: QWidget, duration: int = 260):
+    """Fade a top-level widget in from transparent using an OutCubic easing."""
+    widget.setWindowOpacity(0.0)
+    widget._show_anim = QPropertyAnimation(widget, b"windowOpacity")
+    widget._show_anim.setDuration(duration)
+    widget._show_anim.setStartValue(0.0)
+    widget._show_anim.setEndValue(1.0)
+    widget._show_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    widget._show_anim.start()
 
 
 # ------------------------------------------------------------------
@@ -130,6 +149,10 @@ class PageWidget(QFrame):
         self._bg.lower()
         self.setAutoFillBackground(False)
 
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 24)
         layout.setSpacing(14)
@@ -151,6 +174,21 @@ class PageWidget(QFrame):
         card.setMaximumHeight(140)
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._body.addWidget(card, 0)
+
+    def _animate_opacity(self, start, end, duration=220):
+        self._opacity_anim = QPropertyAnimation(self._opacity, b"opacity")
+        self._opacity_anim.setDuration(duration)
+        self._opacity_anim.setStartValue(start)
+        self._opacity_anim.setEndValue(end)
+        self._opacity_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._opacity_anim.start()
+
+    def fade_in(self, duration=220):
+        self._opacity.setOpacity(0.0)
+        self._animate_opacity(0.0, 1.0, duration)
+
+    def fade_out(self, duration=160):
+        self._animate_opacity(1.0, 0.0, duration)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -659,7 +697,29 @@ class AgentWindow(QWidget):
         self._switch_view(4)
 
     def _switch_view(self, index: int):
+        current = self._stack.currentWidget()
+        target = self._stack.widget(index)
+        if current == target:
+            self._update_nav(index)
+            return
+        if current is None:
+            self._stack.setCurrentIndex(index)
+            self._update_nav(index)
+            if isinstance(target, PageWidget):
+                target.fade_in()
+            return
+        # Smooth cross-fade between pages.
+        current.fade_out()
+        QTimer.singleShot(180, lambda idx=index: self._finish_switch(idx))
+
+    def _finish_switch(self, index: int):
         self._stack.setCurrentIndex(index)
+        self._update_nav(index)
+        target = self._stack.widget(index)
+        if isinstance(target, PageWidget):
+            target.fade_in()
+
+    def _update_nav(self, index: int):
         for i, btn in enumerate(self._nav_btns):
             active = i == index
             btn.setChecked(active)
@@ -692,6 +752,16 @@ class AgentWindow(QWidget):
             self._drag_pos = None
         super().mouseReleaseEvent(event)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.setWindowOpacity(0.0)
+        self._show_anim = QPropertyAnimation(self, b"windowOpacity")
+        self._show_anim.setDuration(300)
+        self._show_anim.setStartValue(0.0)
+        self._show_anim.setEndValue(1.0)
+        self._show_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._show_anim.start()
+
     def set_status(self, state: str):
         labels = {
             "idle": "IDLE",
@@ -718,6 +788,8 @@ class VisionWindow(QWidget):
         self.setStyleSheet(f"background: {_css_color(theme.bg)};")
         self._interact = False
         self._cursor_pos = None
+        self._cursor_current = QPointF()
+        self._cursor_target = None
         self._cursor_glyph = GlyphRenderer(48)
         self._cursor_glyph.set_state("viewing")
 
@@ -779,7 +851,10 @@ class VisionWindow(QWidget):
             self.video.setCursor(QCursor(Qt.CursorShape.BlankCursor))
             self._cursor_overlay.show()
             self._cursor_overlay.raise_()
-            self._cursor_pos = QPoint(self.video.width() // 2, self.video.height() // 2)
+            cx, cy = self.video.width() // 2, self.video.height() // 2
+            self._cursor_current = QPointF(cx, cy)
+            self._cursor_target = QPointF(cx, cy)
+            self._cursor_pos = QPoint(cx, cy)
             self._cursor_timer.start(50)
             self.status.setText("Interact mode ON — pointer and keyboard events are forwarded silently.")
         else:
@@ -790,10 +865,9 @@ class VisionWindow(QWidget):
 
     def _on_mouse_move(self, event):
         if self._interact:
-            pos = event.position().toPoint()
-            self._cursor_pos = pos
-            self._move_cursor_overlay()
-            self.status.setText(f"Pointer at ({pos.x()}, {pos.y()}) — forwarding silently")
+            pos = event.position()
+            self._cursor_target = QPointF(pos)
+            self.status.setText(f"Pointer at ({int(pos.x())}, {int(pos.y())}) — forwarding silently")
         else:
             QLabel.mouseMoveEvent(self.video, event)
 
@@ -812,14 +886,19 @@ class VisionWindow(QWidget):
         self._cursor_glyph.update(0.05)
         pm = self._cursor_glyph.pixmap(self.theme, self.theme.glyph)
         self._cursor_overlay.setPixmap(pm)
+        if self._cursor_target is not None:
+            self._cursor_current += (self._cursor_target - self._cursor_current) * 0.25
+            self._cursor_pos = QPoint(int(self._cursor_current.x()), int(self._cursor_current.y()))
         self._move_cursor_overlay()
 
     def _on_mouse_press(self, event):
         if self._interact:
-            pos = event.position().toPoint()
-            self._cursor_pos = pos
+            pos = event.position()
+            self._cursor_target = QPointF(pos)
+            self._cursor_current = QPointF(pos)
+            self._cursor_pos = QPoint(int(pos.x()), int(pos.y()))
             self._move_cursor_overlay()
-            self.status.setText(f"Click at ({pos.x()}, {pos.y()}) — forwarding silently")
+            self.status.setText(f"Click at ({int(pos.x())}, {int(pos.y())}) — forwarding silently")
         else:
             QLabel.mousePressEvent(self.video, event)
 
@@ -828,6 +907,16 @@ class VisionWindow(QWidget):
             self.status.setText(f"Key pressed: {event.text()} — forwarding silently")
         else:
             QLabel.keyPressEvent(self.video, event)
+
+    def showEvent(self, event):
+        self.setWindowOpacity(0.0)
+        super().showEvent(event)
+        anim = QPropertyAnimation(self, b"windowOpacity")
+        anim.setDuration(280)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
 
 
 class FileManagerWindow(QFrame):
@@ -1206,6 +1295,10 @@ class FileManagerWindow(QFrame):
                     self.status.setText(f"Upload failed: {e}")
         self._load_path(self.current_path)
 
+    def showEvent(self, event):
+        _fade_show(self)
+        super().showEvent(event)
+
 
 class TerminalWindow(QWidget):
     """Agent-side remote terminal (.xterminal)."""
@@ -1319,6 +1412,10 @@ class TerminalWindow(QWidget):
             "In production these execute silently on the client.\n"
         )
 
+    def showEvent(self, event):
+        _fade_show(self)
+        super().showEvent(event)
+
 
 class ScreenshotWindow(QWidget):
     """Pop-out screenshot viewer."""
@@ -1366,6 +1463,10 @@ class ScreenshotWindow(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save Screenshot", "atlas_screenshot.png")
         if path:
             self.image.setText(f"Saved to {path}")
+
+    def showEvent(self, event):
+        _fade_show(self)
+        super().showEvent(event)
 
 
 class CommandWindow(QWidget):
@@ -1468,6 +1569,10 @@ class CommandWindow(QWidget):
 
     def _clear(self):
         self.output.setText("Enter a classic Magnet command below.\n")
+
+    def showEvent(self, event):
+        _fade_show(self)
+        super().showEvent(event)
 
 
 # ------------------------------------------------------------------
