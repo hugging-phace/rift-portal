@@ -18,7 +18,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal, QUrl, QProcess
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QUrl, QProcess
 from PySide6.QtGui import (
     QColor, QPainter, QPainterPath, QBrush, QPen, QCursor, QMouseEvent,
     QDesktopServices, QPalette,
@@ -717,6 +717,9 @@ class VisionWindow(QWidget):
         self.resize(1200, 800)
         self.setStyleSheet(f"background: {_css_color(theme.bg)};")
         self._interact = False
+        self._cursor_pos = None
+        self._cursor_glyph = GlyphRenderer(48)
+        self._cursor_glyph.set_state("viewing")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -757,6 +760,15 @@ class VisionWindow(QWidget):
         self.video.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         layout.addWidget(self.video, 1)
 
+        self._cursor_overlay = QLabel(self.video)
+        self._cursor_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._cursor_overlay.setStyleSheet("background: transparent;")
+        self._cursor_overlay.setFixedSize(48, 48)
+        self._cursor_overlay.hide()
+
+        self._cursor_timer = QTimer(self)
+        self._cursor_timer.timeout.connect(self._animate_cursor)
+
         self.status = QLabel("Click Interact to control the remote pointer and keyboard.")
         self.status.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
         layout.addWidget(self.status)
@@ -764,22 +776,49 @@ class VisionWindow(QWidget):
     def _toggle_interact(self, checked: bool):
         self._interact = checked
         if checked:
-            self.video.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+            self.video.setCursor(QCursor(Qt.CursorShape.BlankCursor))
+            self._cursor_overlay.show()
+            self._cursor_overlay.raise_()
+            self._cursor_pos = QPoint(self.video.width() // 2, self.video.height() // 2)
+            self._cursor_timer.start(50)
             self.status.setText("Interact mode ON — pointer and keyboard events are forwarded silently.")
         else:
             self.video.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            self._cursor_overlay.hide()
+            self._cursor_timer.stop()
             self.status.setText("Click Interact to control the remote pointer and keyboard.")
 
     def _on_mouse_move(self, event):
         if self._interact:
             pos = event.position().toPoint()
+            self._cursor_pos = pos
+            self._move_cursor_overlay()
             self.status.setText(f"Pointer at ({pos.x()}, {pos.y()}) — forwarding silently")
         else:
             QLabel.mouseMoveEvent(self.video, event)
 
+    def _move_cursor_overlay(self):
+        if self._cursor_pos is None:
+            return
+        size = self._cursor_overlay.size()
+        x = self._cursor_pos.x() - size.width() // 2
+        y = self._cursor_pos.y() - size.height() // 2
+        # Clamp so the overlay stays inside the video panel.
+        x = max(0, min(x, self.video.width() - size.width()))
+        y = max(0, min(y, self.video.height() - size.height()))
+        self._cursor_overlay.move(x, y)
+
+    def _animate_cursor(self):
+        self._cursor_glyph.update(0.05)
+        pm = self._cursor_glyph.pixmap(self.theme, self.theme.glyph)
+        self._cursor_overlay.setPixmap(pm)
+        self._move_cursor_overlay()
+
     def _on_mouse_press(self, event):
         if self._interact:
             pos = event.position().toPoint()
+            self._cursor_pos = pos
+            self._move_cursor_overlay()
             self.status.setText(f"Click at ({pos.x()}, {pos.y()}) — forwarding silently")
         else:
             QLabel.mousePressEvent(self.video, event)
