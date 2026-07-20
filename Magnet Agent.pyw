@@ -23,7 +23,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QColor, QRadialGradient, QLinearGradient, QFont,
-    QCursor, QPixmap, QPen, QBrush, QPainterPath, QFontMetrics
+    QCursor, QPixmap, QPen, QBrush, QPainterPath, QFontMetrics,
+    QMouseEvent, QKeyEvent,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -2977,6 +2978,9 @@ class SessionDetailView(QWidget):
     portal_open_requested = Signal(str)  # (session_id) — admin clicked Open Portal
     close_session_requested = Signal(str)  # (session_id) — close/end session
     chat_sent = Signal(str, str)           # (session_id, text) — chat message
+    interact_toggled = Signal(bool)        # True when the admin enables Vision pointer control
+    pointer_event = Signal(dict)           # normalized Vision pointer event
+    key_event = Signal(dict)               # Vision keyboard event
 
     # Command → orb state mapping
     COMMAND_MAP = {
@@ -3158,7 +3162,9 @@ class SessionDetailView(QWidget):
             }}
         """)
         self._vision_feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._vision_feed.setScaledContents(True)
+        # Keep the displayed pixmap at its provided aspect ratio; _normalize_feed_position
+        # maps clicks against the actual centered pixmap.
+        self._vision_feed.setScaledContents(False)
         self._vision_feed.setVisible(False)
         left_layout.addWidget(self._vision_feed)
 
@@ -3167,6 +3173,34 @@ class SessionDetailView(QWidget):
         self._vision_status.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
         self._vision_status.setVisible(False)
         left_layout.addWidget(self._vision_status)
+
+        # Interact toggle (remote pointer/keyboard control over Vision)
+        self._interact = False
+        self._interact_btn = QPushButton("Interact: OFF")
+        self._interact_btn.setCheckable(True)
+        self._interact_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._interact_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255, 255, 255, 15);
+                color: {PALETTE['muted']};
+                border: 1px solid rgba(255, 255, 255, 30);
+                border-radius: 6px;
+                padding: 5px 12px;
+                font-size: 11px;
+            }}
+            QPushButton:checked {{
+                background: rgba(220, 80, 180, 80);
+                color: #f0d0e8;
+                border: 1px solid rgba(220, 80, 180, 140);
+            }}
+        """)
+        self._interact_btn.setVisible(False)
+        self._interact_btn.toggled.connect(self._on_interact_toggled)
+        left_layout.addWidget(self._interact_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self._vision_feed.setMouseTracking(True)
+        self._vision_feed.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._vision_feed.installEventFilter(self)
 
         # Command input
         cmd_label = QLabel("COMMAND INPUT  (.help for list)")
@@ -3527,6 +3561,10 @@ class SessionDetailView(QWidget):
         """Show or hide the Vision feed panel and update its status text."""
         self._vision_feed.setVisible(active)
         self._vision_status.setVisible(active)
+        self._interact_btn.setVisible(active)
+        if not active:
+            self._interact = False
+            self._interact_btn.setChecked(False)
         if status:
             self._vision_status.setText(status)
 
@@ -3541,6 +3579,98 @@ class SessionDetailView(QWidget):
         )
         self._vision_feed.setPixmap(scaled)
         self._vision_status.setText("Live")
+
+    def _on_interact_toggled(self, checked: bool):
+        self._interact = checked
+        self._interact_btn.setText("Interact: ON" if checked else "Interact: OFF")
+        self.interact_toggled.emit(checked)
+        if checked:
+            self._vision_feed.setCursor(QCursor(Qt.CursorShape.BlankCursor))
+            self._vision_feed.setFocus()
+        else:
+            self._vision_feed.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
+    def eventFilter(self, watched, event: QEvent):
+        if watched is not self._vision_feed or not self._interact:
+            return super().eventFilter(watched, event)
+
+        etype = event.type()
+        pos = event.position().toPoint()
+        if etype == QEvent.Type.MouseMove:
+            self._send_pointer_event(pos, "mouse_move")
+            return True
+        elif etype in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+            down = etype == QEvent.Type.MouseButtonPress
+            button = {1: "left", 2: "right", 4: "middle"}.get(
+                event.button().value, "left"
+            )
+            self._send_pointer_event(pos, "mouse_click", button=button, down=down)
+            return True
+        elif etype == QEvent.Type.Wheel:
+            delta = event.angleDelta()
+            if delta.x() != 0:
+                axis = "horizontal"
+                clicks = delta.x() / 120.0
+            else:
+                axis = "vertical"
+                clicks = delta.y() / 120.0
+            self.pointer_event.emit({"action": "scroll", "axis": axis, "clicks": clicks})
+            return True
+        elif etype == QEvent.Type.KeyPress:
+            self._send_key_event(event.key(), event.text(), True)
+            return True
+        elif etype == QEvent.Type.KeyRelease:
+            self._send_key_event(event.key(), event.text(), False)
+            return True
+
+        return super().eventFilter(watched, event)
+
+    def _send_pointer_event(self, pos: QPoint, action: str, button: str = "left", down: bool = True):
+        norm = self._normalize_feed_position(pos)
+        if norm is None:
+            return
+        if action == "mouse_move":
+            self.pointer_event.emit({"action": "mouse_move", "x": norm[0], "y": norm[1]})
+        elif action == "mouse_click":
+            self.pointer_event.emit({"action": "mouse_click", "button": button, "down": down, "x": norm[0], "y": norm[1]})
+
+    def _send_key_event(self, key: int, text: str, down: bool):
+        if key in (Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+            name = {Qt.Key.Key_Shift: "shift", Qt.Key.Key_Control: "ctrl",
+                    Qt.Key.Key_Alt: "alt", Qt.Key.Key_Meta: "win"}.get(key, "")
+        else:
+            name = text if text else ""
+        if name:
+            self.key_event.emit({"action": "key", "text": name, "down": down})
+
+    def _normalize_feed_position(self, pos: QPoint):
+        """Map a widget coordinate to normalized (0..1) coordinates on the displayed frame.
+
+        The pixmap is displayed centered at 1:1 scale (setScaledContents is False)
+        because set_vision_frame already scales it with KeepAspectRatio.  Any
+        letterboxing is accounted for so clicks land where the admin sees them.
+        """
+        rect = self._vision_feed.rect()
+        w, h = rect.width(), rect.height()
+        if w <= 0 or h <= 0:
+            return None
+        pm = self._vision_feed.pixmap()
+        if pm and not pm.isNull():
+            pw, ph = pm.width(), pm.height()
+            if pw > 0 and ph > 0:
+                off_x = (w - pw) / 2.0
+                off_y = (h - ph) / 2.0
+                x = (pos.x() - off_x) / pw
+                y = (pos.y() - off_y) / ph
+            else:
+                x = pos.x() / w
+                y = pos.y() / h
+        else:
+            x = pos.x() / w
+            y = pos.y() / h
+        x = max(0.0, min(1.0, x))
+        y = max(0.0, min(1.0, y))
+        return (x, y)
 
     def clear_vision_frame(self):
         self._vision_feed.clear()
@@ -4817,6 +4947,10 @@ class MagnetAgent(QWidget):
         self._session_detail.portal_open_requested.connect(self._on_portal_open_requested)
         self._session_detail.close_session_requested.connect(self._close_session)
         self._session_detail.chat_sent.connect(self._on_chat_sent)
+        self._session_detail.interact_toggled.connect(self._on_vision_interact_toggled)
+        self._session_detail.pointer_event.connect(self._on_vision_pointer_event)
+        self._session_detail.key_event.connect(self._on_vision_key_event)
+        self._vision_interact = False
         self._stack.addWidget(self._session_detail)
 
         content_layout.addWidget(self._stack, 1)
@@ -5335,6 +5469,24 @@ class MagnetAgent(QWidget):
                 self._session_detail.set_vision_frame(pixmap)
         except Exception as e:
             _log(f"Vision frame decode error: {e}")
+
+    def _on_vision_interact_toggled(self, active: bool):
+        """The admin toggled remote pointer/keyboard control for Vision."""
+        self._vision_interact = active
+        if active:
+            _log("[Vision] Interact enabled — pointer/keyboard events will be forwarded")
+        else:
+            _log("[Vision] Interact disabled")
+
+    def _on_vision_pointer_event(self, data: dict):
+        if not self._vision_interact or not self._vision_server:
+            return
+        self._vision_server.send_control(data)
+
+    def _on_vision_key_event(self, data: dict):
+        if not self._vision_interact or not self._vision_server:
+            return
+        self._vision_server.send_control(data)
 
     def _on_portal_open_requested(self, session_id):
         """Admin clicked Open Portal — send the command to the client."""
