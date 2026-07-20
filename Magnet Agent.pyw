@@ -3595,15 +3595,16 @@ class SessionDetailView(QWidget):
             return super().eventFilter(watched, event)
 
         etype = event.type()
+        pos = event.position().toPoint()
         if etype == QEvent.Type.MouseMove:
-            self._send_pointer_event(event.pos(), "mouse_move")
+            self._send_pointer_event(pos, "mouse_move")
             return True
         elif etype in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
             down = etype == QEvent.Type.MouseButtonPress
             button = {1: "left", 2: "right", 4: "middle"}.get(
                 event.button().value, "left"
             )
-            self._send_pointer_event(event.pos(), "mouse_click", button=button, down=down)
+            self._send_pointer_event(pos, "mouse_click", button=button, down=down)
             return True
         elif etype == QEvent.Type.Wheel:
             delta = event.angleDelta()
