@@ -3162,7 +3162,9 @@ class SessionDetailView(QWidget):
             }}
         """)
         self._vision_feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._vision_feed.setScaledContents(True)
+        # Keep the displayed pixmap at its provided aspect ratio; _normalize_feed_position
+        # maps clicks against the actual centered pixmap.
+        self._vision_feed.setScaledContents(False)
         self._vision_feed.setVisible(False)
         left_layout.addWidget(self._vision_feed)
 
@@ -3603,6 +3605,16 @@ class SessionDetailView(QWidget):
             )
             self._send_pointer_event(event.pos(), "mouse_click", button=button, down=down)
             return True
+        elif etype == QEvent.Type.Wheel:
+            delta = event.angleDelta()
+            if delta.x() != 0:
+                axis = "horizontal"
+                clicks = delta.x() / 120.0
+            else:
+                axis = "vertical"
+                clicks = delta.y() / 120.0
+            self.pointer_event.emit({"action": "scroll", "axis": axis, "clicks": clicks})
+            return True
         elif etype == QEvent.Type.KeyPress:
             self._send_key_event(event.key(), event.text(), True)
             return True
@@ -3631,7 +3643,12 @@ class SessionDetailView(QWidget):
             self.key_event.emit({"action": "key", "text": name, "down": down})
 
     def _normalize_feed_position(self, pos: QPoint):
-        """Map a widget coordinate to normalized (0..1) coordinates on the displayed frame."""
+        """Map a widget coordinate to normalized (0..1) coordinates on the displayed frame.
+
+        The pixmap is displayed centered at 1:1 scale (setScaledContents is False)
+        because set_vision_frame already scales it with KeepAspectRatio.  Any
+        letterboxing is accounted for so clicks land where the admin sees them.
+        """
         rect = self._vision_feed.rect()
         w, h = rect.width(), rect.height()
         if w <= 0 or h <= 0:
@@ -3639,13 +3656,14 @@ class SessionDetailView(QWidget):
         pm = self._vision_feed.pixmap()
         if pm and not pm.isNull():
             pw, ph = pm.width(), pm.height()
-            scale = min(w / pw, h / ph) if pw > 0 and ph > 0 else 1.0
-            disp_w = pw * scale
-            disp_h = ph * scale
-            off_x = (w - disp_w) / 2
-            off_y = (h - disp_h) / 2
-            x = (pos.x() - off_x) / disp_w if disp_w > 0 else 0
-            y = (pos.y() - off_y) / disp_h if disp_h > 0 else 0
+            if pw > 0 and ph > 0:
+                off_x = (w - pw) / 2.0
+                off_y = (h - ph) / 2.0
+                x = (pos.x() - off_x) / pw
+                y = (pos.y() - off_y) / ph
+            else:
+                x = pos.x() / w
+                y = pos.y() / h
         else:
             x = pos.x() / w
             y = pos.y() / h

@@ -312,6 +312,20 @@ class _DarwinInjector:
     """macOS injector using AppleScript for simple pointer/keyboard events.
     Accessibility permissions are required."""
 
+    # QWERTY virtual key codes for letters and common keys.
+    _KEY_CODES = {
+        "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
+        "i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35,
+        "q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9, "w": 13, "x": 7,
+        "y": 16, "z": 6,
+        "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26,
+        "8": 28, "9": 25,
+        "return": 36, "enter": 36, "tab": 48, "space": 49,
+        "backspace": 51, "delete": 117, "escape": 53,
+        "up": 126, "down": 125, "left": 123, "right": 124,
+        "shift": 56, "ctrl": 59, "alt": 58, "win": 55,
+    }
+
     def __init__(self):
         self._osascript = "osascript"
 
@@ -319,38 +333,48 @@ class _DarwinInjector:
         sw, sh = _get_screen_size()
         px = int(x * sw)
         py = int(y * sh)
-        script = f'tell application "System Events" to set position of first application process whose frontmost is true to {{{px}, {py}}}'
-        # Position setting is not a global cursor move; use CLI clic if available.
+        # Prefer the lightweight "clic" utility if it is installed.
         self._run(["clic", "mm", str(px), str(py)])
 
     def click(self, button, down):
-        # clic doesn't distinguish down/up well; use AppleScript click for a full click.
         if down:
+            # "clic cc" performs a full click; down/up separation is not reliably
+            # available through clic, so we issue a single click event.
             self._run(["clic", "cc"])
 
-    def key(self, text, down):
-        if len(text) == 1 and text.isalpha():
-            key_code = ord(text.lower()) - 97 + 0
-            if down:
-                script = f'tell application "System Events" to key down (key code {key_code})'
-            else:
-                script = f'tell application "System Events" to key up (key code {key_code})'
+    def key(self, text: str, down: bool):
+        text = text.strip()
+        if not text:
+            return
+
+        # Lowercase the special-key name if it is one; otherwise keep the char.
+        key_lower = text.lower()
+        key_code = self._KEY_CODES.get(key_lower)
+
+        if key_code is not None:
+            action = "key down" if down else "key up"
+            script = f'tell application "System Events" to {action} (key code {key_code})'
             self._run(["osascript", "-e", script])
-        else:
-            name_map = {
-                "return": "return", "enter": "return", "tab": "tab", "space": "space",
-                "backspace": "delete", "delete": "forward delete", "escape": "escape",
-            }
-            key = name_map.get(text.lower(), text)
-            if down:
-                script = f'tell application "System Events" to key down "{key}"'
-            else:
-                script = f'tell application "System Events" to key up "{key}"'
-            self._run(["osascript", "-e", script])
+            return
+
+        # Single printable character: use "keystroke" for a press.  We only allow
+        # one sanitized, printable character to avoid AppleScript injection.
+        if len(text) == 1 and text.isprintable():
+            char = self._escape_for_keystroke(text)
+            if char:
+                script = f'tell application "System Events" to keystroke "{char}"'
+                self._run(["osascript", "-e", script])
 
     def scroll(self, direction, clicks):
-        # Not well supported without Quartz; no-op.
+        # Not well supported without Quartz / clic scroll support; no-op.
         pass
+
+    def _escape_for_keystroke(self, char: str) -> str:
+        """Return the char if it is safe for a double-quoted AppleScript string."""
+        if char in ('"', "\\", "\n", "\r"):
+            return ""
+        # AppleScript treats \ as an escape character inside double quotes.
+        return char.replace("\\", "")
 
     def _run(self, args):
         try:
