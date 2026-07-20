@@ -128,10 +128,17 @@ class PageWidget(QFrame):
         )
         self._bg.setGeometry(self.rect())
         self._bg.lower()
+
+        shadow = QGraphicsDropShadowEffect(self._bg)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 75))
+        shadow.setOffset(0, 6)
+        self._bg.setGraphicsEffect(shadow)
+
         self.setAutoFillBackground(False)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(20, 20, 20, 24)
         layout.setSpacing(14)
 
         title_color = theme.text if bg_color.lightness() < 128 else theme.panel
@@ -270,7 +277,7 @@ class AgentWindow(QWidget):
 
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(20, 16, 20, 16)
+        body.setContentsMargins(20, 16, 20, 20)
         body.setSpacing(20)
 
         # Sidebar (detached floating panel)
