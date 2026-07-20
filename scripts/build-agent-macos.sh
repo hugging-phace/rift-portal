@@ -12,6 +12,8 @@ python3 -m pip install --upgrade pip
 python3 -m pip install pyinstaller -r requirements-agent.txt
 
 pyinstaller --windowed --name "MagnetAgent" \
+  --icon "assets/icon.icns" \
+  --osx-bundle-identifier "com.magnetos.agent" \
   --hidden-import base64 \
   --hidden-import datetime \
   --hidden-import email.mime.multipart \

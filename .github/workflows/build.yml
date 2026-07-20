@@ -26,6 +26,7 @@ jobs:
       - name: Build Windows agent
         run: |
           pyinstaller --noconsole --name "MagnetAgent" `
+            --icon "assets\icon.ico" `
             --hidden-import base64 `
             --hidden-import datetime `
             --hidden-import email.mime.multipart `
@@ -83,6 +84,8 @@ jobs:
       - name: Build macOS agent
         run: |
           pyinstaller --windowed --name "MagnetAgent" \
+            --icon "assets/icon.icns" \
+            --osx-bundle-identifier "com.magnetos.agent" \
             --hidden-import base64 \
             --hidden-import datetime \
             --hidden-import email.mime.multipart \

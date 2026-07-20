@@ -8,6 +8,7 @@ python -m pip install --upgrade pip
 python -m pip install pyinstaller -r requirements-agent.txt
 
 pyinstaller --noconsole --name "MagnetAgent" `
+  --icon "assets\icon.ico" `
   --hidden-import base64 `
   --hidden-import datetime `
   --hidden-import email.mime.multipart `
