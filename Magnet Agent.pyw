@@ -19,7 +19,8 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QPointF, QSize, QRectF, Signal, QElapsedTimer, QEvent
+    Qt, QTimer, QPoint, QPointF, QSize, QRectF, Signal, QElapsedTimer, QEvent,
+    QPropertyAnimation, QEasingCurve,
 )
 from PySide6.QtGui import (
     QPainter, QColor, QRadialGradient, QLinearGradient, QFont,
@@ -29,7 +30,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QTextEdit, QLineEdit, QFrame, QSizePolicy,
-    QGraphicsDropShadowEffect, QStackedWidget, QDialog, QFileDialog
+    QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QStackedWidget, QDialog, QFileDialog
 )
 
 import uuid as _uuid
@@ -1368,9 +1369,40 @@ THEMES = {
         "nav_hover_bg": "rgba(255, 255, 255, 8)",
         "sheen": (255, 255, 255, 10),
     },
+    "MagnetOS v2": {
+        "is_dark": True,
+        "bg": "#0A0F1A",
+        "panel_grad_top": (24, 32, 52, 252),
+        "panel_grad_mid": (18, 26, 44, 253),
+        "panel_grad_bot": (14, 20, 36, 254),
+        "sidebar_grad_top": (26, 34, 54, 252),
+        "sidebar_grad_mid": (20, 28, 46, 253),
+        "sidebar_grad_bot": (15, 22, 38, 254),
+        "grid_minor": (40, 55, 85, 35),
+        "grid_major": (55, 75, 115, 25),
+        "border": (80, 110, 160, 35),
+        "sidebar_border": (90, 125, 180, 45),
+        "main_border": (70, 100, 150, 40),
+        "text": "#E8E9F0",
+        "muted": "#8A9AB0",
+        "accent": "#5F87FF",
+        "accent_bright": "#95B3FF",
+        "hud": "#7A9BFF",
+        "hud_dim": "#5A7A9A",
+        "success": "#22c55e",
+        "error": "#ef4444",
+        "input_bg": "#10151F",
+        "chat_bg": "#0A0E16",
+        "bubble_user": "#1A253A",
+        "bubble_atlas": "#111827",
+        "bubble_border": "#2A3A55",
+        "nav_active_bg": "rgba(95, 135, 255, 30)",
+        "nav_hover_bg": "rgba(255, 255, 255, 8)",
+        "sheen": (255, 255, 255, 8),
+    },
 }
 
-_current_theme_name = "Presence"
+_current_theme_name = "MagnetOS v2"
 THEME = THEMES[_current_theme_name]
 
 
@@ -1381,6 +1413,8 @@ def apply_theme(name):
         _current_theme_name = name
         THEME = THEMES[name]
         # Update PALETTE references for stylesheet-based widgets
+        PALETTE["bg"] = THEME["bg"]
+        PALETTE["panel_light"] = f"rgba({THEME['panel_grad_mid'][0]}, {THEME['panel_grad_mid'][1]}, {THEME['panel_grad_mid'][2]}, {THEME['panel_grad_mid'][3]/255:.2f})"
         PALETTE["text"] = THEME["text"]
         PALETTE["muted"] = THEME["muted"]
         PALETTE["accent"] = THEME["accent"]
@@ -4917,6 +4951,12 @@ class MagnetAgent(QWidget):
         self._stack = QStackedWidget()
         self._stack.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+        # Natural-motion page cross-fade
+        self._stack_opacity = QGraphicsOpacityEffect(self._stack)
+        self._stack_opacity.setOpacity(1.0)
+        self._stack.setGraphicsEffect(self._stack_opacity)
+        self._switch_anim = None
+
         # View 0: Session list
         self._session_list = SessionListView()
         self._session_list.session_selected.connect(self._open_session)
@@ -5141,15 +5181,34 @@ class MagnetAgent(QWidget):
                     "⚠ Message failed to send (Firebase unreachable)", is_admin=False)
 
     def _switch_view(self, index):
-        current = self._stack.currentIndex()
+        if self._stack.currentIndex() == index:
+            return
         # If we're leaving the session detail view, ask the admin to confirm first.
-        if current == 4 and index != 4 and self._current_session is not None:
+        if self._stack.currentIndex() == 4 and index != 4 and self._current_session is not None:
             if not self._confirm_leave_session():
                 return
+
+        self._target_view_index = index
+        self._switch_anim = QPropertyAnimation(self._stack_opacity, b"opacity")
+        self._switch_anim.setDuration(160)
+        self._switch_anim.setStartValue(1.0)
+        self._switch_anim.setEndValue(0.0)
+        self._switch_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._switch_anim.finished.connect(self._finish_switch_view)
+        self._switch_anim.start()
+
+    def _finish_switch_view(self):
+        index = getattr(self, "_target_view_index", 0)
         self._stack.setCurrentIndex(index)
         # Only highlight nav buttons for nav views (0, 1, 2, 3)
         for i, btn in enumerate(self._nav_buttons):
             btn.set_active(i == index and index < len(self._nav_buttons))
+        self._switch_anim = QPropertyAnimation(self._stack_opacity, b"opacity")
+        self._switch_anim.setDuration(220)
+        self._switch_anim.setStartValue(0.0)
+        self._switch_anim.setEndValue(1.0)
+        self._switch_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._switch_anim.start()
 
     def _apply_theme(self, name):
         """Apply a new theme and refresh the entire UI."""
