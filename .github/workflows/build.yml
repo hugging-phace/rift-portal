@@ -142,11 +142,16 @@ jobs:
           path: ./macos
       - name: Package release assets
         run: |
-          cd windows
-          zip -r ../MagnetAgent-windows.zip MagnetAgent
-          cd ../macos
-          zip -r ../MagnetAgent-macos.zip MagnetAgent.app
-          cd ..
+          # actions/download-artifact extracts the artifact contents directly into
+          # the download path. Re-stage the files under the expected top-level
+          # folder/app names before zipping.
+          mkdir -p MagnetAgent
+          cp -a windows/* MagnetAgent/ 2>/dev/null || true
+          zip -r MagnetAgent-windows.zip MagnetAgent
+
+          mkdir -p MagnetAgent.app
+          cp -a macos/* MagnetAgent.app/ 2>/dev/null || true
+          zip -r MagnetAgent-macos.zip MagnetAgent.app
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
