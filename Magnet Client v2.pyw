@@ -157,7 +157,7 @@ class ChatWindow(QWidget):
         send_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         send_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.on_accent)}; "
-            f"border-radius: 17px; font-size: 16px; font-weight: 600; }}"
+            f"border-radius: 17px; font-size: 13px; font-weight: 700; padding: 0; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.accent_hover)}; }}"
         )
         send_btn.clicked.connect(self._send)
@@ -325,44 +325,51 @@ class FlyoutPanel(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
-        # Header glyph + title
-        header = QVBoxLayout()
-        header.setSpacing(8)
+        # Header card: rounded navy, detached from edges by the layout margins
+        self._header_card = QFrame()
+        self._header_card.setFrameShape(QFrame.Shape.NoFrame)
+        self._header_card.setStyleSheet(
+            f"QFrame {{ background: {_css_color(self.theme.panel)}; border-radius: 16px; }}"
+        )
+        header = QVBoxLayout(self._header_card)
+        header.setContentsMargins(14, 14, 14, 14)
+        header.setSpacing(6)
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._glyph = GlyphRenderer(size=64)
+        self._glyph = GlyphRenderer(size=56)
         self._glyph.set_state("idle")
         self._glyph_lbl = QLabel()
-        self._glyph_lbl.setFixedSize(64, 64)
+        self._glyph_lbl.setFixedSize(56, 56)
         self._update_glyph_pixmap()
         header.addWidget(self._glyph_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._title = QLabel("Magnet Client")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setStyleSheet(
-            f"color: {_css_color(self.theme.text)}; font-size: 18px; font-weight: 600; background: transparent;"
+            f"color: {_css_color(self.theme.text)}; font-size: 17px; font-weight: 600; background: transparent;"
         )
         header.addWidget(self._title, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addLayout(header)
 
         # Status dot + text
         status_layout = QHBoxLayout()
         status_layout.setSpacing(6)
+        status_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_dot = QLabel("●")
         self._status_dot.setStyleSheet(
             f"color: {_css_color(self.theme.accent)}; font-size: 10px; background: transparent;"
         )
         self._status_text = QLabel("Connected to Atlas")
         self._status_text.setStyleSheet(
-            f"color: {_css_color(self.theme.muted)}; font-size: 12px; background: transparent;"
+            f"color: {_css_color(self.theme.muted)}; font-size: 11px; background: transparent;"
         )
         status_layout.addWidget(self._status_dot)
         status_layout.addWidget(self._status_text, alignment=Qt.AlignmentFlag.AlignVCenter)
-        status_layout.addStretch()
-        layout.addLayout(status_layout)
+        header.addLayout(status_layout)
+
+        layout.addWidget(self._header_card)
 
         # Action buttons
         self._buttons = []
@@ -381,10 +388,12 @@ class FlyoutPanel(QWidget):
             self._buttons.append(btn)
             layout.addWidget(btn)
 
+        layout.addStretch()
+
     def _button_stylesheet(self) -> str:
         t = self.theme
-        bg = _css_color(t.surface)
-        hover = _css_color(t.hover)
+        bg = _css_color(t.panel)
+        hover = _css_color(t.accent)
         text = _css_color(t.text)
         return (
             f"QPushButton {{ background: {bg}; color: {text}; border-radius: 10px; "
@@ -397,7 +406,7 @@ class FlyoutPanel(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), self._corner_radius, self._corner_radius)
-        painter.fillPath(path, QBrush(self.theme.panel))
+        painter.fillPath(path, QBrush(self.theme.bg))
 
         highlight = QPainterPath()
         highlight.addRoundedRect(1, 1, self.width() - 2, self.height() / 2.5,
@@ -411,7 +420,7 @@ class FlyoutPanel(QWidget):
     def _update_glyph_pixmap(self):
         self._glyph_lbl.setPixmap(
             self._glyph.pixmap(self.theme, color=self.theme.glyph).scaled(
-                64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                56, 56, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
         )
 
@@ -439,11 +448,14 @@ class FlyoutPanel(QWidget):
 
     def apply_theme(self, theme: Theme):
         self.theme = theme
+        self._header_card.setStyleSheet(
+            f"QFrame {{ background: {_css_color(theme.panel)}; border-radius: 16px; }}"
+        )
         self._title.setStyleSheet(
-            f"color: {_css_color(theme.text)}; font-size: 18px; font-weight: 600; background: transparent;"
+            f"color: {_css_color(theme.text)}; font-size: 17px; font-weight: 600; background: transparent;"
         )
         self._status_text.setStyleSheet(
-            f"color: {_css_color(theme.muted)}; font-size: 12px; background: transparent;"
+            f"color: {_css_color(theme.muted)}; font-size: 11px; background: transparent;"
         )
         for btn in self._buttons:
             btn.setStyleSheet(self._button_stylesheet())
