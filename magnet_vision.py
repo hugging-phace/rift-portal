@@ -75,6 +75,292 @@ def get_default_ip() -> str:
 
 
 # ------------------------------------------------------------------
+# Remote pointer / keyboard injection (client-side)
+# ------------------------------------------------------------------
+def _get_screen_size():
+    """Return (width, height) for the primary screen in device pixels."""
+    try:
+        # Qt must be available in the client process
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            screen = app.primaryScreen()
+            if screen is not None:
+                geo = screen.geometry()
+                return geo.width(), geo.height()
+    except Exception:
+        pass
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        return img.size
+    except Exception:
+        pass
+    return 1920, 1080
+
+
+# Lazily loaded platform-specific injection helpers.
+_injector = None
+
+def _get_injector():
+    global _injector
+    if _injector is not None:
+        return _injector
+    system = platform.system()
+    if system == "Windows":
+        _injector = _WindowsInjector()
+    elif system == "Linux":
+        _injector = _LinuxInjector()
+    elif system == "Darwin":
+        _injector = _DarwinInjector()
+    else:
+        _injector = _NullInjector()
+    return _injector
+
+
+class _NullInjector:
+    def move(self, x, y):
+        pass
+    def click(self, button, down):
+        pass
+    def key(self, text, down):
+        pass
+    def scroll(self, direction, clicks):
+        pass
+
+
+class _WindowsInjector:
+    """Use the Windows SendInput API for pointer and keyboard events."""
+
+    def __init__(self):
+        import ctypes
+        self._ctypes = ctypes
+        self._user32 = ctypes.windll.user32
+        self._SendInput = self._user32.SendInput
+
+        self._INPUT_MOUSE = 0
+        self._INPUT_KEYBOARD = 1
+        self._MOUSEEVENTF_MOVE = 0x0001
+        self._MOUSEEVENTF_ABSOLUTE = 0x8000
+        self._MOUSEEVENTF_LEFTDOWN = 0x0002
+        self._MOUSEEVENTF_LEFTUP = 0x0004
+        self._MOUSEEVENTF_RIGHTDOWN = 0x0008
+        self._MOUSEEVENTF_RIGHTUP = 0x0010
+        self._MOUSEEVENTF_MIDDLEDOWN = 0x0020
+        self._MOUSEEVENTF_MIDDLEUP = 0x0040
+        self._MOUSEEVENTF_WHEEL = 0x0800
+        self._MOUSEEVENTF_HWHEEL = 0x1000
+
+        self._setup_structures()
+
+    def _setup_structures(self):
+        c = self._ctypes
+
+        class _MOUSEINPUT(c.Structure):
+            _fields_ = [
+                ("dx", c.c_long),
+                ("dy", c.c_long),
+                ("mouseData", c.c_ulong),
+                ("dwFlags", c.c_ulong),
+                ("time", c.c_ulong),
+                ("dwExtraInfo", c.c_void_p),
+            ]
+
+        class _KEYBDINPUT(c.Structure):
+            _fields_ = [
+                ("wVk", c.c_ushort),
+                ("wScan", c.c_ushort),
+                ("dwFlags", c.c_ulong),
+                ("time", c.c_ulong),
+                ("dwExtraInfo", c.c_void_p),
+            ]
+
+        class _INPUT_I(c.Union):
+            _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT)]
+
+        class _INPUT(c.Structure):
+            _fields_ = [("type", c.c_ulong), ("ii", _INPUT_I)]
+
+        self._INPUT = _INPUT
+        self._MOUSEINPUT = _MOUSEINPUT
+        self._KEYBDINPUT = _KEYBDINPUT
+        self._SendInput.argtypes = [
+            ctypes.c_uint,
+            ctypes.POINTER(_INPUT),
+            ctypes.c_int,
+        ]
+        self._SendInput.restype = ctypes.c_uint
+
+    def _screen_size(self):
+        try:
+            return self._user32.GetSystemMetrics(0), self._user32.GetSystemMetrics(1)
+        except Exception:
+            return _get_screen_size()
+
+    def move(self, x, y):
+        w, h = self._screen_size()
+        if w <= 0 or h <= 0:
+            return
+        # Convert 0..1 normalized coordinates to Windows absolute 0..65535.
+        abs_x = int(x * 65535 + 0.5)
+        abs_y = int(y * 65535 + 0.5)
+        abs_x = max(0, min(65535, abs_x))
+        abs_y = max(0, min(65535, abs_y))
+        inp = self._INPUT()
+        inp.type = self._INPUT_MOUSE
+        inp.ii.mi = self._MOUSEINPUT(
+            dx=abs_x,
+            dy=abs_y,
+            mouseData=0,
+            dwFlags=self._MOUSEEVENTF_MOVE | self._MOUSEEVENTF_ABSOLUTE,
+            time=0,
+            dwExtraInfo=None,
+        )
+        self._SendInput(1, self._ctypes.byref(inp), self._ctypes.sizeof(self._INPUT))
+
+    def click(self, button, down):
+        flags = {
+            "left": (self._MOUSEEVENTF_LEFTDOWN, self._MOUSEEVENTF_LEFTUP),
+            "right": (self._MOUSEEVENTF_RIGHTDOWN, self._MOUSEEVENTF_RIGHTUP),
+            "middle": (self._MOUSEEVENTF_MIDDLEDOWN, self._MOUSEEVENTF_MIDDLEUP),
+        }.get(button, (self._MOUSEEVENTF_LEFTDOWN, self._MOUSEEVENTF_LEFTUP))
+        flag = flags[0] if down else flags[1]
+        inp = self._INPUT()
+        inp.type = self._INPUT_MOUSE
+        inp.ii.mi = self._MOUSEINPUT(
+            dx=0, dy=0, mouseData=0, dwFlags=flag, time=0, dwExtraInfo=None
+        )
+        self._SendInput(1, self._ctypes.byref(inp), self._ctypes.sizeof(self._INPUT))
+
+    def scroll(self, direction, clicks):
+        delta = int(clicks * 120)
+        if direction == "horizontal":
+            data = delta << 16
+            dwFlags = self._MOUSEEVENTF_HWHEEL
+        else:
+            data = delta
+            dwFlags = self._MOUSEEVENTF_WHEEL
+        inp = self._INPUT()
+        inp.type = self._INPUT_MOUSE
+        inp.ii.mi = self._MOUSEINPUT(
+            dx=0, dy=0, mouseData=data, dwFlags=dwFlags, time=0, dwExtraInfo=None
+        )
+        self._SendInput(1, self._ctypes.byref(inp), self._ctypes.sizeof(self._INPUT))
+
+    def key(self, text, down):
+        if len(text) == 1:
+            vk_full = self._user32.VkKeyScanA(self._ctypes.c_char(text.encode("latin1", "ignore")))
+            if vk_full == -1:
+                return
+            vk = vk_full & 0xFF
+        else:
+            name_map = {
+                "return": 0x0D, "enter": 0x0D, "tab": 0x09, "space": 0x20,
+                "backspace": 0x08, "delete": 0x2E, "escape": 0x1B,
+                "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+                "shift": 0x10, "ctrl": 0x11, "alt": 0x12, "win": 0x5B,
+            }
+            vk = name_map.get(text.lower())
+            if vk is None:
+                return
+        keybdFlags = 0 if down else 0x0002
+        inp = self._INPUT()
+        inp.type = self._INPUT_KEYBOARD
+        inp.ii.ki = self._KEYBDINPUT(
+            wVk=vk, wScan=0, dwFlags=keybdFlags, time=0, dwExtraInfo=None
+        )
+        self._SendInput(1, self._ctypes.byref(inp), self._ctypes.sizeof(self._INPUT))
+
+
+class _LinuxInjector:
+    """Fallback Linux injector using xdotool so we don't require Xlib bindings."""
+
+    def __init__(self):
+        self._xdotool = "xdotool"
+
+    def move(self, x, y):
+        sw, sh = _get_screen_size()
+        px = int(x * sw)
+        py = int(y * sh)
+        self._run([self._xdotool, "mousemove", "--sync", str(px), str(py)])
+
+    def click(self, button, down):
+        btn = {"left": "1", "right": "3", "middle": "2"}.get(button, "1")
+        action = "mousedown" if down else "mouseup"
+        self._run([self._xdotool, action, btn])
+
+    def key(self, text, down):
+        if text == " ":
+            text = "space"
+        action = "keydown" if down else "keyup"
+        self._run([self._xdotool, action, text])
+
+    def scroll(self, direction, clicks):
+        button = "4" if clicks > 0 else "5"
+        for _ in range(abs(int(clicks))):
+            self._run([self._xdotool, "click", button])
+
+    def _run(self, args):
+        try:
+            import subprocess
+            subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        except Exception:
+            pass
+
+
+class _DarwinInjector:
+    """macOS injector using AppleScript for simple pointer/keyboard events.
+    Accessibility permissions are required."""
+
+    def __init__(self):
+        self._osascript = "osascript"
+
+    def move(self, x, y):
+        sw, sh = _get_screen_size()
+        px = int(x * sw)
+        py = int(y * sh)
+        script = f'tell application "System Events" to set position of first application process whose frontmost is true to {{{px}, {py}}}'
+        # Position setting is not a global cursor move; use CLI clic if available.
+        self._run(["clic", "mm", str(px), str(py)])
+
+    def click(self, button, down):
+        # clic doesn't distinguish down/up well; use AppleScript click for a full click.
+        if down:
+            self._run(["clic", "cc"])
+
+    def key(self, text, down):
+        if len(text) == 1 and text.isalpha():
+            key_code = ord(text.lower()) - 97 + 0
+            if down:
+                script = f'tell application "System Events" to key down (key code {key_code})'
+            else:
+                script = f'tell application "System Events" to key up (key code {key_code})'
+            self._run(["osascript", "-e", script])
+        else:
+            name_map = {
+                "return": "return", "enter": "return", "tab": "tab", "space": "space",
+                "backspace": "delete", "delete": "forward delete", "escape": "escape",
+            }
+            key = name_map.get(text.lower(), text)
+            if down:
+                script = f'tell application "System Events" to key down "{key}"'
+            else:
+                script = f'tell application "System Events" to key up "{key}"'
+            self._run(["osascript", "-e", script])
+
+    def scroll(self, direction, clicks):
+        # Not well supported without Quartz; no-op.
+        pass
+
+    def _run(self, args):
+        try:
+            import subprocess
+            subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
 # Message framing: 1 byte type + 4 bytes length + payload
 # ------------------------------------------------------------------
 async def send_msg(writer, msg_type: int, payload: bytes) -> None:
@@ -401,6 +687,23 @@ class VisionStreamer(QThread):
             self._config.target_fps = max(self._config.min_fps, min(self._config.max_fps, f))
         elif action == "stop":
             self.stop_stream()
+        elif action in ("mouse_move", "pointer_move"):
+            x = float(data.get("x", 0.0))
+            y = float(data.get("y", 0.0))
+            _get_injector().move(x, y)
+        elif action in ("mouse_click", "pointer_click"):
+            button = str(data.get("button", "left")).lower()
+            down = bool(data.get("down", True))
+            _get_injector().click(button, down)
+        elif action == "key":
+            text = str(data.get("text", ""))
+            down = bool(data.get("down", True))
+            if text:
+                _get_injector().key(text, down)
+        elif action == "scroll":
+            direction = "vertical" if data.get("axis") != "horizontal" else "horizontal"
+            clicks = float(data.get("clicks", 1.0))
+            _get_injector().scroll(direction, clicks)
 
     async def _stream_loop(self, writer):
         capture = make_capture_source()
