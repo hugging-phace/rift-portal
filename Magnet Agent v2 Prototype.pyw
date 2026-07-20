@@ -123,14 +123,15 @@ class PageWidget(QFrame):
         bg_color = bg if bg is not None else theme.bg
         self._bg = QFrame(self)
         self._bg.setFrameShape(QFrame.Shape.NoFrame)
-        self._bg.setStyleSheet(f"background-color: {_css_color(bg_color)};")
+        self._bg.setStyleSheet(
+            f"background-color: {_css_color(bg_color)}; border-radius: 18px;"
+        )
         self._bg.setGeometry(self.rect())
         self._bg.lower()
         self.setAutoFillBackground(False)
 
         layout = QVBoxLayout(self)
-        bottom = 0 if bg is not None and bg == theme.panel else 16
-        layout.setContentsMargins(16, 16, 16, bottom)
+        layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
         title_color = theme.text if bg_color.lightness() < 128 else theme.panel
@@ -147,8 +148,9 @@ class PageWidget(QFrame):
     def add_card(self, title: str, body: str, callback=None):
         card = Card(title, body, self.theme, self, callback=callback)
         card.setMinimumHeight(120)
+        card.setMaximumHeight(140)
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._body.addWidget(card, 1)
+        self._body.addWidget(card, 0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -268,7 +270,7 @@ class AgentWindow(QWidget):
 
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(20, 12, 0, 0)
+        body.setContentsMargins(20, 16, 20, 16)
         body.setSpacing(20)
 
         # Sidebar (detached floating panel)
@@ -279,17 +281,17 @@ class AgentWindow(QWidget):
 
         # Connection status + app name
         status_row = QHBoxLayout()
-        status_row.setSpacing(8)
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {_css_color(theme.accent)}; font-size: 10px;")
+        status_row.setSpacing(6)
         title_lbl = QLabel("Magnet Agent")
         title_lbl.setStyleSheet(
             f"color: {_css_color(theme.text)}; font-size: 12px; font-weight: 600;"
         )
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color: {_css_color(theme.accent)}; font-size: 10px;")
         status_text = QLabel("Connected")
         status_text.setStyleSheet(f"color: {_css_color(theme.muted)}; font-size: 12px;")
-        status_row.addWidget(dot)
         status_row.addWidget(title_lbl)
+        status_row.addWidget(dot)
         status_row.addWidget(status_text, alignment=Qt.AlignmentFlag.AlignVCenter)
         status_row.addStretch()
         sidebar_layout.addLayout(status_row)
@@ -388,6 +390,7 @@ class AgentWindow(QWidget):
             callback=lambda: self._open_active_session("Atlas Workstation"),
         )
         page.add_card("Studio Mac", "Online — macOS\nLast seen: 2m ago")
+        page._body.addStretch(1)
         return page
 
     def _build_commands_page(self):
@@ -467,7 +470,7 @@ class AgentWindow(QWidget):
         page._body.addWidget(info_bar)
 
         hbox = QHBoxLayout()
-        hbox.setSpacing(20)
+        hbox.setSpacing(0)
         hbox.setContentsMargins(0, 0, 0, 0)
 
         # Left column: file manager + manual commands button
