@@ -12,14 +12,18 @@ existing Magnet Agent backend.
 
 import os
 import platform
+import secrets
 import shutil
+import smtplib
 import subprocess
 import sys
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QPoint, QPointF, QTimer, Signal, QUrl, QProcess,
+    Qt, QPoint, QPointF, QTimer, Signal, QUrl, QProcess, QSettings,
     QPropertyAnimation, QSequentialAnimationGroup, QParallelAnimationGroup,
     QEasingCurve,
 )
@@ -31,7 +35,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QStackedWidget, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect, QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
-    QMessageBox,
+    QMessageBox, QComboBox, QCheckBox,
     QTreeWidget, QTreeWidgetItem, QSplitter, QFileDialog, QMenu,
     QHeaderView,
 )
@@ -130,6 +134,42 @@ class Card(QFrame):
         if self.callback:
             self.callback()
         super().mousePressEvent(event)
+
+
+class FormCard(QFrame):
+    """A rounded panel with a title and a vertical form area."""
+
+    def __init__(self, title: str, theme: Theme, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setStyleSheet(
+            f"background: {_css_color(theme.panel)}; border-radius: 12px;"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(
+            f"color: {_css_color(theme.text)}; font-size: 14px; font-weight: 600;"
+        )
+        layout.addWidget(title_lbl)
+
+        self._body = QVBoxLayout()
+        self._body.setSpacing(10)
+        layout.addLayout(self._body, 1)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
+
+    def add_row(self, widget):
+        self._body.addWidget(widget)
+
+    def add_layout(self, layout):
+        self._body.addLayout(layout)
 
 
 class PageWidget(QFrame):
@@ -263,10 +303,11 @@ class StateControlDialog(QWidget):
 # Agent window
 # ------------------------------------------------------------------
 class AgentWindow(QWidget):
-    def __init__(self, theme: Theme, glyph: GlyphRenderer, initial_view: int = 0, parent=None):
+    def __init__(self, theme: Theme, glyph: GlyphRenderer, settings: QSettings, initial_view: int = 0, parent=None):
         super().__init__(parent)
         self.theme = theme
         self.glyph = glyph
+        self.settings = settings
         self._drag_pos = None
 
         self.setWindowTitle("Magnet Agent")
@@ -350,14 +391,15 @@ class AgentWindow(QWidget):
         self._session_sub_btn = None
 
         sessions_page = self._build_sessions_page()
+        deploy_page = self._build_deploy_page()
         commands_page = self._build_commands_page()
         terminal_page = self._build_terminal_page()
         settings_page = self._build_settings_page()
         active_page = self._build_active_session_page()
-        for p in (sessions_page, commands_page, terminal_page, settings_page, active_page):
+        for p in (sessions_page, deploy_page, commands_page, terminal_page, settings_page, active_page):
             self._stack.addWidget(p)
 
-        main_nav = ["Sessions", "Commands", "Terminal", "Settings"]
+        main_nav = ["Sessions", "Deploy", "Commands", "Terminal", "Settings"]
         for idx, label in enumerate(main_nav):
             btn = QPushButton(label)
             btn.setStyleSheet(self._nav_stylesheet(idx == initial_view))
@@ -370,7 +412,7 @@ class AgentWindow(QWidget):
             if label == "Sessions":
                 sidebar_layout.addWidget(self._sessions_sub_container)
 
-        if initial_view == 4:
+        if initial_view == 5:
             self._open_active_session("Atlas Workstation")
         else:
             self._switch_view(initial_view)
@@ -442,11 +484,270 @@ class AgentWindow(QWidget):
         page.add_card("Command Output", "Remote command results and logs will appear here.")
         return page
 
+    def _build_deploy_page(self):
+        page = PageWidget("Deploy Magnet Client", self.theme)
+
+        form = FormCard("Customer invite", self.theme, page)
+        t = self.theme
+        label_style = f"color: {_css_color(t.muted)}; font-size: 12px;"
+        input_style = (
+            f"QLineEdit, QTextEdit, QComboBox {{ background: {_css_color(t.hover)}; "
+            f"color: {_css_color(t.text)}; border: none; border-radius: 8px; padding: 8px; font-size: 13px; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+            f"QComboBox QAbstractItemView {{ background: {_css_color(t.panel)}; "
+            f"color: {_css_color(t.text)}; selection-background-color: {_css_color(t.accent)}; }}"
+        )
+
+        email_lbl = QLabel("Customer email")
+        email_lbl.setStyleSheet(label_style)
+        email_input = QLineEdit()
+        email_input.setPlaceholderText("support@customer.com")
+        email_input.setStyleSheet(input_style)
+        form.add_row(email_lbl)
+        form.add_row(email_input)
+
+        os_lbl = QLabel("Platform")
+        os_lbl.setStyleSheet(label_style)
+        os_combo = QComboBox()
+        os_combo.addItems(["Windows", "macOS", "Linux"])
+        os_combo.setStyleSheet(input_style)
+        form.add_row(os_lbl)
+        form.add_row(os_combo)
+
+        note_lbl = QLabel("Personal note (optional)")
+        note_lbl.setStyleSheet(label_style)
+        note_input = QTextEdit()
+        note_input.setPlaceholderText("Hi, click the link below to start the remote session...")
+        note_input.setMaximumHeight(80)
+        note_input.setStyleSheet(input_style)
+        form.add_row(note_lbl)
+        form.add_row(note_input)
+
+        preview_lbl = QLabel("Email preview")
+        preview_lbl.setStyleSheet(label_style)
+        form.add_row(preview_lbl)
+        preview = QTextEdit()
+        preview.setReadOnly(True)
+        preview.setStyleSheet(input_style)
+        preview.setMinimumHeight(140)
+        form.add_row(preview)
+
+        send_real = QCheckBox("Send real email (requires SMTP in Settings)")
+        send_real.setChecked(False)
+        send_real.setStyleSheet(f"color: {_css_color(t.muted)}; font-size: 12px;")
+        form.add_row(send_real)
+
+        send_btn = QPushButton("Send invite")
+        send_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(t.accent)}; color: white; border: none; "
+            f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {_css_color(t.hover)}; }}"
+        )
+        send_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        form.add_row(send_btn)
+
+        page._body.addWidget(form)
+        page._body.addStretch(1)
+
+        # Keep references used by preview / send logic.
+        self._deploy_email = email_input
+        self._deploy_os = os_combo
+        self._deploy_note = note_input
+        self._deploy_preview = preview
+        self._deploy_send_real = send_real
+
+        email_input.textChanged.connect(self._update_invite_preview)
+        note_input.textChanged.connect(self._update_invite_preview)
+        os_combo.currentTextChanged.connect(self._update_invite_preview)
+        send_btn.clicked.connect(self._send_invite)
+
+        self._update_invite_preview()
+        return page
+
     def _build_settings_page(self):
         page = PageWidget("Settings", self.theme)
-        page.add_card("Appearance", "Light / dark mode follows the operating system.")
-        page.add_card("Network", "Server endpoint and connection preferences.")
+
+        # SMTP credentials
+        smtp_card = FormCard("Email sending (SMTP)", self.theme, page)
+        t = self.theme
+        label_style = f"color: {_css_color(t.muted)}; font-size: 12px;"
+        input_style = (
+            f"QLineEdit {{ background: {_css_color(t.hover)}; "
+            f"color: {_css_color(t.text)}; border: none; border-radius: 8px; padding: 8px; font-size: 13px; }}"
+        )
+
+        host_lbl = QLabel("SMTP host")
+        host_lbl.setStyleSheet(label_style)
+        host_input = QLineEdit()
+        host_input.setPlaceholderText("smtp.gmail.com")
+        host_input.setStyleSheet(input_style)
+        smtp_card.add_row(host_lbl)
+        smtp_card.add_row(host_input)
+
+        port_lbl = QLabel("SMTP port")
+        port_lbl.setStyleSheet(label_style)
+        port_input = QLineEdit()
+        port_input.setPlaceholderText("587")
+        port_input.setStyleSheet(input_style)
+        smtp_card.add_row(port_lbl)
+        smtp_card.add_row(port_input)
+
+        user_lbl = QLabel("Email address / username")
+        user_lbl.setStyleSheet(label_style)
+        user_input = QLineEdit()
+        user_input.setPlaceholderText("agent@company.com")
+        user_input.setStyleSheet(input_style)
+        smtp_card.add_row(user_lbl)
+        smtp_card.add_row(user_input)
+
+        pass_lbl = QLabel("App password")
+        pass_lbl.setStyleSheet(label_style)
+        pass_input = QLineEdit()
+        pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        pass_input.setPlaceholderText("Stored locally in QSettings for this prototype")
+        pass_input.setStyleSheet(input_style)
+        smtp_card.add_row(pass_lbl)
+        smtp_card.add_row(pass_input)
+
+        save_status = QLabel("")
+        save_status.setStyleSheet(f"color: {_css_color(t.accent)}; font-size: 12px;")
+        smtp_card.add_row(save_status)
+
+        save_btn = QPushButton("Save SMTP credentials")
+        save_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(t.accent)}; color: white; border: none; "
+            f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {_css_color(t.hover)}; }}"
+        )
+        save_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        smtp_card.add_row(save_btn)
+
+        save_btn.clicked.connect(
+            lambda: self._save_smtp_settings(
+                host_input.text(), port_input.text(), user_input.text(), pass_input.text(), save_status
+            )
+        )
+
+        # Load saved values
+        smtp = self._smtp_from_settings()
+        host_input.setText(smtp.get("host", ""))
+        port_input.setText(str(smtp.get("port", "")) if smtp.get("port") else "")
+        user_input.setText(smtp.get("user", ""))
+        pass_input.setText(smtp.get("password", ""))
+
+        page._body.addWidget(smtp_card)
+
+        # OAuth placeholders
+        oauth_card = FormCard("Sign-in providers", self.theme, page)
+        oauth_note = QLabel("OAuth sign-in lets each agent use their own email without managing SMTP credentials. These are placeholders while compiled installers are built.")
+        oauth_note.setWordWrap(True)
+        oauth_note.setStyleSheet(f"color: {_css_color(t.muted)}; font-size: 12px;")
+        oauth_card.add_row(oauth_note)
+
+        for provider, color in (
+            ("Sign in with Google", "#4285F4"),
+            ("Sign in with Apple", "#000000"),
+            ("Sign in with Microsoft", "#2F2F2F"),
+        ):
+            btn = QPushButton(provider)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {color}; color: white; border: none; "
+                f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
+                f"QPushButton:hover {{ background: #555555; }}"
+            )
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.clicked.connect(self._oauth_coming_soon)
+            oauth_card.add_row(btn)
+
+        page._body.addWidget(oauth_card)
+        page._body.addStretch(1)
         return page
+
+    def _smtp_from_settings(self) -> dict:
+        return {
+            "host": self.settings.value("smtp/host", "", type=str),
+            "port": self.settings.value("smtp/port", "", type=str),
+            "user": self.settings.value("smtp/user", "", type=str),
+            "password": self.settings.value("smtp/password", "", type=str),
+        }
+
+    def _save_smtp_settings(self, host: str, port: str, user: str, password: str, status_lbl: QLabel):
+        self.settings.setValue("smtp/host", host)
+        self.settings.setValue("smtp/port", port)
+        self.settings.setValue("smtp/user", user)
+        self.settings.setValue("smtp/password", password)
+        self.settings.sync()
+        status_lbl.setText("Credentials saved locally.")
+        QTimer.singleShot(2500, lambda: status_lbl.setText(""))
+
+    def _oauth_coming_soon(self):
+        QMessageBox.information(
+            self,
+            "Coming soon",
+            "OAuth sign-in will be enabled once the Magnet Client is distributed as signed installers.",
+        )
+
+    def _update_invite_preview(self, _=None):
+        if not hasattr(self, "_deploy_preview"):
+            return
+        email = self._deploy_email.text().strip() or "support@customer.com"
+        platform = self._deploy_os.currentText()
+        note = self._deploy_note.toPlainText().strip()
+        code = secrets.token_hex(4).upper()
+        link = f"https://magnet.example.com/download/{platform.lower().replace(' ', '-')}?code={code}"
+
+        body = (
+            f"Hi,\n\n"
+            f"{note if note else 'You have been invited to a Magnet remote support session.'}\n\n"
+            f"Platform: {platform}\n"
+            f"Session code: {code}\n"
+            f"Download: {link}\n\n"
+            f"Run the Magnet Client and enter the session code to connect.\n\n"
+            f"— Magnet Support"
+        )
+        self._deploy_preview.setPlainText(
+            f"To: {email}\nSubject: Magnet remote support invitation\n\n{body}"
+        )
+
+    def _send_invite(self):
+        email = self._deploy_email.text().strip()
+        if not email or "@" not in email:
+            QMessageBox.warning(self, "Invalid email", "Please enter a valid customer email address.")
+            return
+
+        if not self._deploy_send_real.isChecked():
+            QMessageBox.information(
+                self,
+                "Invite preview",
+                "This is a prototype. Check \"Send real email\" and configure SMTP in Settings to actually send invites.",
+            )
+            return
+
+        smtp = self._smtp_from_settings()
+        missing = [k for k in ("host", "port", "user", "password") if not smtp.get(k)]
+        if missing:
+            QMessageBox.warning(
+                self,
+                "SMTP not configured",
+                "Please save your SMTP credentials in Settings before sending invites.",
+            )
+            self._switch_view(4)
+            return
+
+        try:
+            port = int(smtp.get("port") or 587)
+            with smtplib.SMTP(smtp["host"], port, timeout=10) as server:
+                server.starttls()
+                server.login(smtp["user"], smtp["password"])
+                msg = MIMEMultipart()
+                msg["From"] = smtp["user"]
+                msg["To"] = email
+                msg["Subject"] = "Magnet remote support invitation"
+                msg.attach(MIMEText(self._deploy_preview.toPlainText(), "plain"))
+                server.sendmail(smtp["user"], email, msg.as_string())
+            QMessageBox.information(self, "Sent", f"Invite sent to {email}.")
+        except Exception as e:
+            QMessageBox.critical(self, "Send failed", f"Could not send invite:\n{e}")
 
     def _get_system_info(self) -> dict:
         """Return a readable system-info snapshot for the connected client."""
@@ -686,7 +987,7 @@ class AgentWindow(QWidget):
         btn.setCheckable(True)
         btn.setStyleSheet(self._session_sub_stylesheet(False))
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn.clicked.connect(lambda checked: self._switch_view(4))
+        btn.clicked.connect(lambda checked: self._switch_view(5))
         return btn
 
     def _open_active_session(self, name: str):
@@ -694,7 +995,7 @@ class AgentWindow(QWidget):
             self._session_sub_btn = self._make_session_sub_button(name)
             self._sessions_sub_layout.addWidget(self._session_sub_btn)
             self._sessions_sub_container.show()
-        self._switch_view(4)
+        self._switch_view(5)
 
     def _switch_view(self, index: int):
         current = self._stack.currentWidget()
@@ -725,7 +1026,7 @@ class AgentWindow(QWidget):
             btn.setChecked(active)
             btn.setStyleSheet(self._nav_stylesheet(active))
         if self._session_sub_btn is not None:
-            is_active = index == 4
+            is_active = index == 5
             self._session_sub_btn.setChecked(is_active)
             self._session_sub_btn.setStyleSheet(self._session_sub_stylesheet(is_active))
 
@@ -1582,6 +1883,10 @@ class MagnetAgentPrototype(QApplication):
     def __init__(self, argv, force_light: bool = False, initial_view: int = 0):
         super().__init__(argv)
 
+        self.setOrganizationName("MagnetOS")
+        self.setApplicationName("Magnet Agent v2")
+        self.settings = QSettings()
+
         self.theme = _make_agent_theme(not force_light and _is_dark_mode(self))
         self._initial_view = initial_view
         self._apply_scroll_style()
@@ -1593,7 +1898,7 @@ class MagnetAgentPrototype(QApplication):
         self.glyph = GlyphRenderer(size=160)
         self.glyph.set_state("idle")
 
-        self.window = AgentWindow(self.theme, self.glyph, initial_view=self._initial_view)
+        self.window = AgentWindow(self.theme, self.glyph, self.settings, initial_view=self._initial_view)
         self.window.set_status("idle")
         self.window.show()
 
@@ -1640,7 +1945,7 @@ class MagnetAgentPrototype(QApplication):
 # Entry point
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    view_map = {"sessions": 0, "commands": 1, "terminal": 2, "settings": 3, "active": 4}
+    view_map = {"sessions": 0, "deploy": 1, "commands": 2, "terminal": 3, "settings": 4, "active": 5}
     force_light = False
     initial_view = 0
     argv = []
