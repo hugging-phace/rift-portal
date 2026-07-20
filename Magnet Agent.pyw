@@ -1508,18 +1508,18 @@ class StatCard(BlackGlassPanel):
 
         self._label = QLabel(label.upper())
         self._label.setFont(QFont(ADMIN_MONO, 7))
-        self._label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
+        self._label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 2px;")
         layout.addWidget(self._label)
 
         self._value = QLabel(value)
         self._value.setFont(QFont(ADMIN_MONO, 16, QFont.Weight.Bold))
-        self._value.setStyleSheet(f"color: {self._accent}; background: transparent; border: none;")
+        self._value.setStyleSheet(f"color: {self._accent}; background: transparent; ")
         layout.addWidget(self._value)
 
     def set_value(self, value, color=None):
         self._value.setText(value)
         if color:
-            self._value.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+            self._value.setStyleSheet(f"color: {color}; background: transparent; ")
 
 
 # ------------------------------------------------------------------
@@ -1648,7 +1648,7 @@ class NavButton(QPushButton):
                 QPushButton {{
                     background: {t['nav_active_bg']};
                     color: {t['accent_bright']};
-                    border: none;
+                    
                     border-left: 3px solid {t['accent_bright']};
                     text-align: left;
                     padding-left: 16px;
@@ -1659,7 +1659,7 @@ class NavButton(QPushButton):
                 QPushButton {{
                     background: transparent;
                     color: {t['muted']};
-                    border: none;
+                    
                     border-left: 3px solid transparent;
                     text-align: left;
                     padding-left: 16px;
@@ -1687,13 +1687,13 @@ class ControlButton(QPushButton):
             QPushButton {{
                 background: rgba({color}, 20);
                 color: rgb({color});
-                border: 1px solid rgba({color}, 60);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
                 background: rgba({color}, 40);
-                border: 1px solid rgba({color}, 120);
+                
             }}
             QPushButton:pressed {{
                 background: rgba({color}, 60);
@@ -1709,24 +1709,25 @@ class LogEntry(QFrame):
 
     def __init__(self, timestamp, entry_type, message, color=PALETTE["text"], parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet("background: transparent;")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(12)
 
         time_label = QLabel(timestamp)
         time_label.setFont(QFont(ADMIN_MONO, 8))
-        time_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none;")
+        time_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; ")
         time_label.setFixedWidth(70)
 
         type_label = QLabel(entry_type.upper())
         type_label.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        type_label.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+        type_label.setStyleSheet(f"color: {color}; background: transparent; ")
         type_label.setFixedWidth(80)
 
         msg_label = QLabel(message)
         msg_label.setFont(QFont(ADMIN_MONO, 8))
-        msg_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        msg_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         msg_label.setWordWrap(True)
         msg_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
@@ -1892,7 +1893,7 @@ class ResultPopoutDialog(QDialog):
             QTextEdit {{
                 background: {PALETTE['chat_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 6px;
             }}
@@ -2101,12 +2102,12 @@ class ZipDownloadBox(BlackGlassPanel):
 
         header = QLabel("  !  User closed this Rift")
         header.setFont(QFont(ADMIN_MONO, 9, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: {PALETTE['error']}; background: transparent; border: none;")
+        header.setStyleSheet(f"color: {PALETTE['error']}; background: transparent; ")
         layout.addWidget(header)
 
         msg = QLabel("Save any important documents before closing this session or exiting.")
         msg.setFont(QFont(ADMIN_MONO, 8))
-        msg.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        msg.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; ")
         msg.setWordWrap(True)
         layout.addWidget(msg)
 
@@ -2118,7 +2119,7 @@ class ZipDownloadBox(BlackGlassPanel):
             QPushButton {{
                 background: rgba(220, 60, 60, 25);
                 color: {PALETTE['error']};
-                border: 1px solid rgba(220, 60, 60, 60);
+                
                 border-radius: 4px;
                 padding: 0 14px;
             }}
@@ -2145,7 +2146,7 @@ class RiftConfirmDialog(QDialog):
         container.setStyleSheet(f"""
             QFrame {{
                 background-color: rgba(18, 17, 30, 245);
-                border: 1px solid rgba(154, 89, 182, 50);
+                
                 border-radius: 16px;
             }}
         """)
@@ -2156,13 +2157,13 @@ class RiftConfirmDialog(QDialog):
 
         title_lbl = QLabel(title)
         title_lbl.setFont(QFont(ADMIN_MONO, 11, QFont.Weight.Bold))
-        title_lbl.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        title_lbl.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; ")
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_lbl)
 
         msg_lbl = QLabel(message)
         msg_lbl.setFont(QFont(ADMIN_MONO, 9))
-        msg_lbl.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        msg_lbl.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         msg_lbl.setWordWrap(True)
         msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(msg_lbl, 1)
@@ -2178,7 +2179,7 @@ class RiftConfirmDialog(QDialog):
             QPushButton {{
                 background: rgba(255, 255, 255, 12);
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 25);
+                
                 border-radius: 6px;
             }}
             QPushButton:hover {{ background: rgba(255, 255, 255, 22); color: {PALETTE['text']}; }}
@@ -2194,7 +2195,7 @@ class RiftConfirmDialog(QDialog):
                 QPushButton {
                     background: rgba(220, 60, 60, 35);
                     color: #ff8a8a;
-                    border: 1px solid rgba(220, 60, 60, 60);
+                    
                     border-radius: 6px;
                 }
                 QPushButton:hover { background: rgba(220, 60, 60, 55); }
@@ -2204,7 +2205,7 @@ class RiftConfirmDialog(QDialog):
                 QPushButton {{
                     background: rgba(154, 89, 182, 35);
                     color: {PALETTE['accent_bright']};
-                    border: 1px solid rgba(154, 89, 182, 60);
+                    
                     border-radius: 6px;
                 }}
                 QPushButton:hover {{ background: rgba(154, 89, 182, 55); }}
@@ -2246,14 +2247,14 @@ class FileResultBox(BlackGlassPanel):
 
         header = QLabel(f"  v  {title}")
         header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: #28dc64; background: transparent; border: none;")
+        header.setStyleSheet(f"color: #28dc64; background: transparent; ")
         layout.addWidget(header)
 
         file_row = QHBoxLayout()
         file_row.setSpacing(8)
         name_label = QLabel(file_name)
         name_label.setFont(QFont(ADMIN_MONO, 8))
-        name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; ")
         name_label.setWordWrap(True)
         file_row.addWidget(name_label, 1)
 
@@ -2265,7 +2266,7 @@ class FileResultBox(BlackGlassPanel):
             QPushButton {{
                 background: rgba(40, 220, 100, 25);
                 color: #28dc64;
-                border: 1px solid rgba(40, 220, 100, 60);
+                
                 border-radius: 4px;
                 padding: 0 10px;
             }}
@@ -2299,7 +2300,7 @@ class FilesResultBox(BlackGlassPanel):
 
         header = QLabel(f"  v  {title}")
         header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: #28dc64; background: transparent; border: none;")
+        header.setStyleSheet(f"color: #28dc64; background: transparent; ")
         layout.addWidget(header)
 
         for file_name, file_data_b64 in files_dict.items():
@@ -2307,7 +2308,7 @@ class FilesResultBox(BlackGlassPanel):
             file_row.setSpacing(8)
             name_label = QLabel(file_name)
             name_label.setFont(QFont(ADMIN_MONO, 8))
-            name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+            name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; ")
             name_label.setWordWrap(True)
             file_row.addWidget(name_label, 1)
 
@@ -2319,7 +2320,7 @@ class FilesResultBox(BlackGlassPanel):
                 QPushButton {{
                     background: rgba(40, 220, 100, 25);
                     color: #28dc64;
-                    border: 1px solid rgba(40, 220, 100, 60);
+                    
                     border-radius: 4px;
                     padding: 0 8px;
                 }}
@@ -2364,7 +2365,7 @@ class CollapsibleBox(BlackGlassPanel):
 
         # Header row — toggle arrow + title + popout button
         header = QWidget()
-        header.setStyleSheet("background: transparent; border: none;")
+        header.setStyleSheet("background: transparent; ")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(6)
@@ -2375,7 +2376,7 @@ class CollapsibleBox(BlackGlassPanel):
             QPushButton {{
                 background: transparent;
                 color: {color};
-                border: none;
+                
                 text-align: left;
                 padding: 2px 0px;
             }}
@@ -2394,10 +2395,10 @@ class CollapsibleBox(BlackGlassPanel):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 25);
+                
                 border-radius: 4px;
             }}
-            QPushButton:hover {{ color: {PALETTE['accent_bright']}; border: 1px solid rgba(255, 255, 255, 55); }}
+            QPushButton:hover {{ color: {PALETTE['accent_bright']};  }}
         """)
         popout_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         popout_btn.clicked.connect(self._popout)
@@ -2408,7 +2409,7 @@ class CollapsibleBox(BlackGlassPanel):
         # Content area (hidden when collapsed)
         self._content_label = QLabel(content)
         self._content_label.setFont(QFont(ADMIN_MONO, 8))
-        self._content_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        self._content_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         self._content_label.setWordWrap(True)
         self._content_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
@@ -2490,13 +2491,13 @@ class SessionCard(QFrame):
 
         self._name_label = QLabel()
         self._name_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Medium))
-        self._name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        self._name_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; ")
         self._name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         name_host_layout.addWidget(self._name_label)
 
         self._host_label = QLabel()
         self._host_label.setFont(QFont(ADMIN_MONO, 7))
-        self._host_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        self._host_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         self._host_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         name_host_layout.addWidget(self._host_label)
 
@@ -2504,7 +2505,7 @@ class SessionCard(QFrame):
 
         self._state_label = QLabel()
         self._state_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
-        self._state_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
+        self._state_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  letter-spacing: 1px;")
         self._state_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         info_layout.addWidget(self._state_label)
 
@@ -2532,7 +2533,7 @@ class SessionCard(QFrame):
             "stale": PALETTE["error"],
             "inactive": PALETTE["muted"],
         }
-        self._dot.setStyleSheet(f"background: {dot_map.get(card_state, PALETTE['muted'])}; border-radius: 5px; border: none;")
+        self._dot.setStyleSheet(f"background: {dot_map.get(card_state, PALETTE['muted'])}; border-radius: 5px; ")
 
         self._name_label.setText(session.name)
 
@@ -2556,7 +2557,7 @@ class SessionCard(QFrame):
 
         state_info, state_color = STATE_INFO.get(session.orb_state, ("UNKNOWN", PALETTE["muted"]))
         self._state_label.setText(state_info)
-        self._state_label.setStyleSheet(f"color: {state_color}; background: transparent; border: none; letter-spacing: 1px;")
+        self._state_label.setStyleSheet(f"color: {state_color}; background: transparent;  letter-spacing: 1px;")
 
         # If the user has closed this session, show the zip-download alert inline on the card.
         is_closed = session.status in ("user-closed", "closed")
@@ -2565,7 +2566,7 @@ class SessionCard(QFrame):
                 self._zip_alert = QFrame(self)
                 self._zip_alert.setAutoFillBackground(True)
                 self._zip_alert.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-                self._zip_alert.setStyleSheet("background-color: rgba(120, 40, 40, 180); border: 1px solid rgba(220, 80, 80, 120); border-radius: 6px;")
+                self._zip_alert.setStyleSheet("background-color: rgba(120, 40, 40, 180);  border-radius: 6px;")
                 zl = QVBoxLayout(self._zip_alert)
                 zl.setContentsMargins(8, 6, 8, 6)
                 zl.setSpacing(4)
@@ -2585,7 +2586,7 @@ class SessionCard(QFrame):
                     QPushButton {{
                         background: rgba(220, 60, 60, 25);
                         color: {PALETTE['error']};
-                        border: 1px solid rgba(220, 60, 60, 60);
+                        
                         border-radius: 4px;
                         padding: 0 14px;
                     }}
@@ -2740,7 +2741,7 @@ class SessionListView(QWidget):
 
         title = QLabel("ACTIVE SESSIONS")
         title.setFont(QFont(ADMIN_MONO, 10, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {ADMIN_HUD}; background: transparent; border: none; letter-spacing: 3px;")
+        title.setStyleSheet(f"color: {ADMIN_HUD}; background: transparent;  letter-spacing: 3px;")
         header_row.addWidget(title)
         header_row.addStretch()
 
@@ -2752,13 +2753,13 @@ class SessionListView(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 40);
+                
             }}
         """)
         cleanup_btn.clicked.connect(self.cleanup_stale.emit)
@@ -2772,13 +2773,13 @@ class SessionListView(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['error']};
-                border: 1px solid rgba(239, 68, 68, 30);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
                 color: #ff5555;
-                border: 1px solid rgba(239, 68, 68, 60);
+                
             }}
         """)
         purge_btn.clicked.connect(self.purge_closed.emit)
@@ -2792,13 +2793,13 @@ class SessionListView(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 40);
+                
             }}
         """)
         refresh_btn.clicked.connect(self.refresh_requested.emit)
@@ -2812,13 +2813,13 @@ class SessionListView(QWidget):
             QPushButton {{
                 background: rgba(155, 89, 182, 30);
                 color: {PALETTE['accent_bright']};
-                border: 1px solid rgba(155, 89, 182, 80);
+                
                 border-radius: 6px;
                 padding: 0 16px;
             }}
             QPushButton:hover {{
                 background: rgba(155, 89, 182, 50);
-                border: 1px solid rgba(155, 89, 182, 120);
+                
             }}
         """)
         new_btn.clicked.connect(self.new_session_requested.emit)
@@ -2839,12 +2840,12 @@ class SessionListView(QWidget):
         # Active sessions section
         self._active_label = QLabel("ACTIVE")
         self._active_label.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        self._active_label.setStyleSheet(f"color: {PALETTE['success']}; background: transparent; border: none; letter-spacing: 2px;")
+        self._active_label.setStyleSheet(f"color: {PALETTE['success']}; background: transparent;  letter-spacing: 2px;")
         layout.addWidget(self._active_label)
 
         self._active_scroll = QScrollArea()
         self._active_scroll.setWidgetResizable(True)
-        self._active_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._active_scroll.setStyleSheet("QScrollArea { background: transparent;  }")
         self._active_container = QWidget()
         self._active_container.setStyleSheet("background: transparent;")
         self._active_layout = QVBoxLayout(self._active_container)
@@ -2865,7 +2866,7 @@ class SessionListView(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: none;
+                
                 text-align: left;
                 padding: 4px 0;
                 letter-spacing: 2px;
@@ -2880,7 +2881,7 @@ class SessionListView(QWidget):
         self._inactive_scroll = QScrollArea()
         self._inactive_scroll.setMinimumHeight(200)
         self._inactive_scroll.setWidgetResizable(True)
-        self._inactive_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._inactive_scroll.setStyleSheet("QScrollArea { background: transparent;  }")
         self._inactive_container = QWidget()
         self._inactive_container.setStyleSheet("background: transparent;")
         self._inactive_layout = QVBoxLayout(self._inactive_container)
@@ -2897,7 +2898,7 @@ class SessionListView(QWidget):
         # Poll status footer
         self._poll_status_label = QLabel("Firebase: waiting for first poll...")
         self._poll_status_label.setFont(QFont(ADMIN_MONO, 7))
-        self._poll_status_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; padding: 4px 0;")
+        self._poll_status_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  padding: 4px 0;")
         layout.addWidget(self._poll_status_label)
 
     def _toggle_inactive(self):
@@ -3053,23 +3054,23 @@ class SessionDetailView(QWidget):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
-            QPushButton:hover {{ color: {PALETTE['text']}; border: 1px solid rgba(255, 255, 255, 40); }}
+            QPushButton:hover {{ color: {PALETTE['text']};  }}
         """)
         back_btn.clicked.connect(self.back_requested.emit)
         top_bar.addWidget(back_btn)
 
         self._title_label = QLabel("Session")
         self._title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        self._title_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none;")
+        self._title_label.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; ")
         top_bar.addWidget(self._title_label, 1)
 
         self._state_badge = QLabel("IDLE")
         self._state_badge.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        self._state_badge.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 2px;")
+        self._state_badge.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  letter-spacing: 2px;")
         top_bar.addWidget(self._state_badge)
         top_bar.addSpacing(12)
 
@@ -3082,13 +3083,13 @@ class SessionDetailView(QWidget):
             QPushButton {{
                 background: rgba(200, 60, 60, 30);
                 color: #e07070;
-                border: 1px solid rgba(200, 60, 60, 80);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
                 background: rgba(200, 60, 60, 60);
-                border: 1px solid rgba(200, 60, 60, 140);
+                
                 color: #f09090;
             }}
         """)
@@ -3111,7 +3112,7 @@ class SessionDetailView(QWidget):
         blank_hint = QLabel("No portal open for this session.")
         blank_hint.setFont(QFont("Segoe UI", 12))
         blank_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        blank_hint.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        blank_hint.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         blank_layout.addWidget(blank_hint)
 
         self._open_portal_btn = QPushButton("Open Portal For This Session")
@@ -3122,12 +3123,12 @@ class SessionDetailView(QWidget):
             QPushButton {{
                 background: rgba(40, 120, 220, 40);
                 color: #5096e0;
-                border: 1px solid rgba(40, 120, 220, 100);
+                
                 border-radius: 8px;
             }}
             QPushButton:hover {{
                 background: rgba(40, 120, 220, 70);
-                border: 1px solid rgba(40, 120, 220, 160);
+                
                 color: #80b0f0;
             }}
         """)
@@ -3152,7 +3153,7 @@ class SessionDetailView(QWidget):
         # Portal open banner
         banner = QLabel("PORTAL NOW OPEN")
         banner.setFont(QFont(ADMIN_MONO, 9, QFont.Weight.Bold))
-        banner.setStyleSheet(f"color: {PALETTE['success']}; background: transparent; border: none; letter-spacing: 3px;")
+        banner.setStyleSheet(f"color: {PALETTE['success']}; background: transparent;  letter-spacing: 3px;")
         conn_layout.addWidget(banner)
 
         # Main split: left (commands + results) | right (chat)
@@ -3168,7 +3169,7 @@ class SessionDetailView(QWidget):
         # Quick actions — Screenshot, Feed, Pause, Pulse, Vision
         actions_label = QLabel("QUICK ACTIONS")
         actions_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
-        actions_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
+        actions_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 2px;")
         left_layout.addWidget(actions_label)
 
         actions_row = QHBoxLayout()
@@ -3191,7 +3192,7 @@ class SessionDetailView(QWidget):
         self._vision_feed.setStyleSheet(f"""
             QLabel {{
                 background: {PALETTE['bg']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 8px;
             }}
         """)
@@ -3204,7 +3205,7 @@ class SessionDetailView(QWidget):
 
         self._vision_status = QLabel("Vision inactive")
         self._vision_status.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
-        self._vision_status.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
+        self._vision_status.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  letter-spacing: 1px;")
         self._vision_status.setVisible(False)
         left_layout.addWidget(self._vision_status)
 
@@ -3217,7 +3218,7 @@ class SessionDetailView(QWidget):
             QPushButton {{
                 background: rgba(255, 255, 255, 15);
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 30);
+                
                 border-radius: 6px;
                 padding: 5px 12px;
                 font-size: 11px;
@@ -3225,7 +3226,7 @@ class SessionDetailView(QWidget):
             QPushButton:checked {{
                 background: rgba(220, 80, 180, 80);
                 color: #f0d0e8;
-                border: 1px solid rgba(220, 80, 180, 140);
+                
             }}
         """)
         self._interact_btn.setVisible(False)
@@ -3239,7 +3240,7 @@ class SessionDetailView(QWidget):
         # Command input
         cmd_label = QLabel("COMMAND INPUT  (.help for list)")
         cmd_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
-        cmd_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
+        cmd_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 2px;")
         left_layout.addWidget(cmd_label)
 
         self._cmd_input = QLineEdit()
@@ -3250,11 +3251,11 @@ class SessionDetailView(QWidget):
             QLineEdit {{
                 background: {PALETTE['input_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 12px;
             }}
-            QLineEdit:focus {{ border: 1px solid {PALETTE['accent']}; }}
+            QLineEdit:focus {{  }}
         """)
         self._cmd_input.returnPressed.connect(self._send_command)
         left_layout.addWidget(self._cmd_input)
@@ -3262,14 +3263,14 @@ class SessionDetailView(QWidget):
         # Results area
         results_label = QLabel("OUTPUT")
         results_label.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
-        results_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
+        results_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 2px;")
         left_layout.addWidget(results_label)
 
         self._results_scroll = QScrollArea()
         self._results_scroll.setWidgetResizable(True)
         self._results_scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {PALETTE['panel_light']}; border-radius: 3px; }}
         """)
         self._results_container = QWidget()
@@ -3291,14 +3292,14 @@ class SessionDetailView(QWidget):
 
         chat_header = QLabel("CHAT")
         chat_header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        chat_header.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 2px;")
+        chat_header.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 2px;")
         chat_layout.addWidget(chat_header)
 
         self._chat_scroll = QScrollArea()
         self._chat_scroll.setWidgetResizable(True)
         self._chat_scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {PALETTE['panel_light']}; border-radius: 3px; }}
         """)
         self._chat_container = QWidget()
@@ -3320,11 +3321,11 @@ class SessionDetailView(QWidget):
             QLineEdit {{
                 background: {PALETTE['input_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 10px;
             }}
-            QLineEdit:focus {{ border: 1px solid {PALETTE['accent']}; }}
+            QLineEdit:focus {{  }}
         """)
         self._chat_input.returnPressed.connect(self._send_chat)
 
@@ -3336,7 +3337,7 @@ class SessionDetailView(QWidget):
             QPushButton {{
                 background: {PALETTE['accent']};
                 color: #ffffff;
-                border: none;
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
@@ -3497,11 +3498,11 @@ class SessionDetailView(QWidget):
         sl.setSpacing(4)
         header = QLabel(f"  v  {title}")
         header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: #dcc828; background: transparent; border: none;")
+        header.setStyleSheet(f"color: #dcc828; background: transparent; ")
         sl.addWidget(header)
         img = QLabel()
         img.setPixmap(pixmap.scaled(400, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        img.setStyleSheet("background: transparent; border: none;")
+        img.setStyleSheet("background: transparent; ")
         img.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         img.setToolTip("Click to enlarge")
 
@@ -3529,7 +3530,7 @@ class SessionDetailView(QWidget):
         bubble.setStyleSheet(f"""
             QFrame {{
                 background: {bg};
-                border: 1px solid {PALETTE['bubble_border']};
+                
                 border-radius: 8px;
             }}
         """)
@@ -3538,10 +3539,10 @@ class SessionDetailView(QWidget):
         bl.setSpacing(2)
         sender = QLabel(sender_text)
         sender.setFont(QFont(ADMIN_MONO, 7))
-        sender.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        sender.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         msg = QLabel(text)
         msg.setFont(QFont("Segoe UI", 9))
-        msg.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+        msg.setStyleSheet(f"color: {color}; background: transparent; ")
         msg.setWordWrap(True)
         msg.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
@@ -3589,7 +3590,7 @@ class SessionDetailView(QWidget):
             return
         info, color = STATE_INFO.get(self._session.orb_state, ("UNKNOWN", PALETTE["muted"]))
         self._state_badge.setText(info)
-        self._state_badge.setStyleSheet(f"color: {color}; background: transparent; border: none; letter-spacing: 2px;")
+        self._state_badge.setStyleSheet(f"color: {color}; background: transparent;  letter-spacing: 2px;")
 
     def set_vision_active(self, active: bool, status: str = ""):
         """Show or hide the Vision feed panel and update its status text."""
@@ -3748,7 +3749,7 @@ class CommandListEntry(BlackGlassPanel):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['accent_bright']};
-                border: none;
+                
                 text-align: left;
                 padding: 2px 0px;
             }}
@@ -3762,7 +3763,7 @@ class CommandListEntry(BlackGlassPanel):
         # Description (hidden when collapsed)
         desc_label = QLabel(description)
         desc_label.setFont(QFont("Segoe UI", 9))
-        desc_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        desc_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         desc_label.setWordWrap(True)
         desc_label.setVisible(False)
         self._desc_label = desc_label
@@ -3788,20 +3789,20 @@ class CommandListView(QWidget):
         # Title
         title = QLabel("RIFT COMMANDS LIST")
         title.setFont(QFont(ADMIN_MONO, 10, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {ADMIN_HUD}; background: transparent; border: none; letter-spacing: 3px;")
+        title.setStyleSheet(f"color: {ADMIN_HUD}; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(title)
 
         subtitle = QLabel("Know Your Superpowers (And Your Limits)")
         subtitle.setFont(QFont("Segoe UI", 11, QFont.Weight.Medium))
-        subtitle.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        subtitle.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         layout.addWidget(subtitle)
 
         # Scrollable command list
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {PALETTE['panel_light']}; border-radius: 3px; }}
         """)
         container = QWidget()
@@ -3863,7 +3864,7 @@ class TerminalCommandEntry(BlackGlassPanel):
             QPushButton {{
                 background: transparent;
                 color: #c084fc;
-                border: none;
+                
                 text-align: left;
                 padding: 2px 0px;
             }}
@@ -3880,7 +3881,7 @@ class TerminalCommandEntry(BlackGlassPanel):
 
         guts_label = QLabel("Command:")
         guts_label.setFont(QFont(ADMIN_MONO, 7))
-        guts_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none;")
+        guts_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; ")
         guts_layout.addWidget(guts_label)
 
         self._guts_input = QLineEdit(guts)
@@ -3889,11 +3890,11 @@ class TerminalCommandEntry(BlackGlassPanel):
             QLineEdit {{
                 background: {PALETTE['input_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 4px;
                 padding: 4px 8px;
             }}
-            QLineEdit:focus {{ border: 1px solid {PALETTE['accent']}; }}
+            QLineEdit:focus {{  }}
         """)
         guts_layout.addWidget(self._guts_input)
 
@@ -3906,11 +3907,11 @@ class TerminalCommandEntry(BlackGlassPanel):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 15);
+                
                 border-radius: 4px;
                 padding: 0 10px;
             }}
-            QPushButton:hover {{ color: {PALETTE['text']}; border: 1px solid rgba(255, 255, 255, 30); }}
+            QPushButton:hover {{ color: {PALETTE['text']};  }}
         """)
         reset_btn.clicked.connect(self._reset)
         guts_layout.addWidget(reset_btn)
@@ -3945,20 +3946,20 @@ class TerminalCommandsView(QWidget):
 
         title = QLabel("TERMINAL COMMANDS")
         title.setFont(QFont(ADMIN_MONO, 10, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: #c084fc; background: transparent; border: none; letter-spacing: 3px;")
+        title.setStyleSheet(f"color: #c084fc; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(title)
 
         subtitle = QLabel("Short-coded aliases for common terminal commands. Click to expand — you can edit the guts or reset to default.")
         subtitle.setFont(QFont("Segoe UI", 9))
-        subtitle.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        subtitle.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {PALETTE['panel_light']}; border-radius: 3px; }}
         """)
         container = QWidget()
@@ -3994,15 +3995,15 @@ class SettingsView(QWidget):
         # Title
         title = QLabel("SETTINGS")
         title.setFont(QFont(ADMIN_MONO, 10, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {THEME['hud']}; background: transparent; border: none; letter-spacing: 3px;")
+        title.setStyleSheet(f"color: {THEME['hud']}; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(title)
 
         # Scrollable settings
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {THEME['bg']}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {THEME['bg']}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {THEME['accent']}; border-radius: 3px; }}
         """)
         container = QWidget()
@@ -4019,12 +4020,12 @@ class SettingsView(QWidget):
 
         theme_header = QLabel("THEME")
         theme_header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        theme_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent; border: none; letter-spacing: 2px;")
+        theme_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent;  letter-spacing: 2px;")
         theme_layout.addWidget(theme_header)
 
         theme_desc = QLabel("Choose your console aesthetic. All themes keep the spacy galaxy milky way vibes.")
         theme_desc.setFont(QFont("Segoe UI", 9))
-        theme_desc.setStyleSheet(f"color: {THEME['muted']}; background: transparent; border: none;")
+        theme_desc.setStyleSheet(f"color: {THEME['muted']}; background: transparent; ")
         theme_desc.setWordWrap(True)
         theme_layout.addWidget(theme_desc)
 
@@ -4041,13 +4042,13 @@ class SettingsView(QWidget):
                 QPushButton {{
                     background: {t['nav_active_bg'] if is_current else 'transparent'};
                     color: {t['accent_bright'] if is_current else t['muted']};
-                    border: 1px solid {t['accent'] if is_current else 'rgba(255,255,255,15)'};
+                    
                     border-radius: 8px;
                     padding: 0 16px;
                     text-align: left;
                 }}
                 QPushButton:hover {{
-                    border: 1px solid {t['accent']};
+                    
                     color: {t['text']};
                 }}
             """)
@@ -4065,7 +4066,7 @@ class SettingsView(QWidget):
             swatch.setStyleSheet(f"""
                 QFrame {{
                     background: {t['accent']};
-                    border: 2px solid {'rgba(255,255,255,40)' if name == current_theme_name() else 'rgba(255,255,255,10)'};
+                    
                     border-radius: 6px;
                 }}
             """)
@@ -4084,7 +4085,7 @@ class SettingsView(QWidget):
 
         gen_header = QLabel("GENERAL")
         gen_header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        gen_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent; border: none; letter-spacing: 2px;")
+        gen_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent;  letter-spacing: 2px;")
         gen_layout.addWidget(gen_header)
 
         # Placeholder toggle rows
@@ -4102,7 +4103,7 @@ class SettingsView(QWidget):
             row.setSpacing(8)
             label = QLabel(label_text)
             label.setFont(QFont("Segoe UI", 9))
-            label.setStyleSheet(f"color: {THEME['text']}; background: transparent; border: none;")
+            label.setStyleSheet(f"color: {THEME['text']}; background: transparent; ")
             row.addWidget(label)
             row.addStretch()
 
@@ -4129,12 +4130,12 @@ class SettingsView(QWidget):
 
         debug_header = QLabel("DEBUG")
         debug_header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        debug_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent; border: none; letter-spacing: 2px;")
+        debug_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent;  letter-spacing: 2px;")
         debug_layout.addWidget(debug_header)
 
         debug_url = QLabel(f"Firebase URL: {FIREBASE_URL}")
         debug_url.setFont(QFont(ADMIN_MONO, 7))
-        debug_url.setStyleSheet(f"color: {THEME['muted']}; background: transparent; border: none;")
+        debug_url.setStyleSheet(f"color: {THEME['muted']}; background: transparent; ")
         debug_url.setWordWrap(True)
         debug_layout.addWidget(debug_url)
 
@@ -4146,12 +4147,12 @@ class SettingsView(QWidget):
             QPushButton {{
                 background: {THEME['input_bg']};
                 color: {THEME['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
-                border: 1px solid {THEME['accent']};
+                
             }}
         """)
         dump_btn.clicked.connect(self._dump_sessions)
@@ -4165,12 +4166,12 @@ class SettingsView(QWidget):
             QPushButton {{
                 background: {THEME['input_bg']};
                 color: {THEME['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 14px;
             }}
             QPushButton:hover {{
-                border: 1px solid {THEME['accent']};
+                
             }}
         """)
         test_btn.clicked.connect(self._test_connection)
@@ -4183,7 +4184,7 @@ class SettingsView(QWidget):
             QTextEdit {{
                 background: {THEME['bg']};
                 color: {THEME['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 8px;
             }}
@@ -4201,12 +4202,12 @@ class SettingsView(QWidget):
 
         about_header = QLabel("ABOUT")
         about_header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        about_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent; border: none; letter-spacing: 2px;")
+        about_header.setStyleSheet(f"color: {THEME['hud_dim']}; background: transparent;  letter-spacing: 2px;")
         about_layout.addWidget(about_header)
 
         about_text = QLabel("Rift Admin Console v2.0\nPython Portal for Atlas\n\nA spacy remote support tool with portal aesthetics.")
         about_text.setFont(QFont("Segoe UI", 9))
-        about_text.setStyleSheet(f"color: {THEME['muted']}; background: transparent; border: none;")
+        about_text.setStyleSheet(f"color: {THEME['muted']}; background: transparent; ")
         about_text.setWordWrap(True)
         about_layout.addWidget(about_text)
 
@@ -4222,7 +4223,7 @@ class SettingsView(QWidget):
                 QPushButton {{
                     background: {THEME['success']};
                     color: #ffffff;
-                    border: none;
+                    
                     border-radius: 12px;
                 }}
             """
@@ -4231,7 +4232,7 @@ class SettingsView(QWidget):
                 QPushButton {{
                     background: {THEME['bg']};
                     color: {THEME['muted']};
-                    border: 1px solid rgba(255, 255, 255, 20);
+                    
                     border-radius: 12px;
                 }}
             """
@@ -4251,13 +4252,13 @@ class SettingsView(QWidget):
                 QPushButton {{
                     background: {t['nav_active_bg'] if is_current else 'transparent'};
                     color: {t['accent_bright'] if is_current else t['muted']};
-                    border: 1px solid {t['accent'] if is_current else 'rgba(255,255,255,15)'};
+                    
                     border-radius: 8px;
                     padding: 0 16px;
                     text-align: left;
                 }}
                 QPushButton:hover {{
-                    border: 1px solid {t['accent']};
+                    
                     color: {t['text']};
                 }}
             """)
@@ -4335,7 +4336,7 @@ class NewSessionDialog(BlackGlassPanel):
 
         title = QLabel("Start New Session")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {PALETTE['accent_bright']}; background: transparent; border: none;")
+        title.setStyleSheet(f"color: {PALETTE['accent_bright']}; background: transparent; ")
         layout.addWidget(title)
 
         self._name_input = QLineEdit()
@@ -4346,11 +4347,11 @@ class NewSessionDialog(BlackGlassPanel):
             QLineEdit {{
                 background: {PALETTE['input_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 12px;
             }}
-            QLineEdit:focus {{ border: 1px solid {PALETTE['accent']}; }}
+            QLineEdit:focus {{  }}
         """)
         layout.addWidget(self._name_input)
 
@@ -4362,11 +4363,11 @@ class NewSessionDialog(BlackGlassPanel):
             QLineEdit {{
                 background: {PALETTE['input_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 12px;
             }}
-            QLineEdit:focus {{ border: 1px solid {PALETTE['accent']}; }}
+            QLineEdit:focus {{  }}
         """)
         layout.addWidget(self._host_input)
 
@@ -4380,7 +4381,7 @@ class NewSessionDialog(BlackGlassPanel):
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 16px;
             }}
@@ -4395,7 +4396,7 @@ class NewSessionDialog(BlackGlassPanel):
             QPushButton {{
                 background: {PALETTE['accent']};
                 color: #ffffff;
-                border: none;
+                
                 border-radius: 6px;
                 padding: 0 16px;
             }}
@@ -4453,7 +4454,7 @@ class DashboardView(QWidget):
         # ---- Controls section ----
         controls_label = QLabel("PORTAL CONTROLS")
         controls_label.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        controls_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 3px;")
+        controls_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(controls_label)
 
         controls_panel = BlackGlassPanel(self, radius=12)
@@ -4492,7 +4493,7 @@ class DashboardView(QWidget):
         # ---- Command log ----
         log_label = QLabel("COMMAND LOG")
         log_label.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        log_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 3px;")
+        log_label.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(log_label)
 
         log_panel = BlackGlassPanel(self, radius=12)
@@ -4503,8 +4504,8 @@ class DashboardView(QWidget):
         self._log_scroll = QScrollArea()
         self._log_scroll.setWidgetResizable(True)
         self._log_scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {PALETTE['panel_light']}; border-radius: 3px; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
@@ -4589,7 +4590,7 @@ class ChatView(QWidget):
         # Header
         header = QLabel("CHAT")
         header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 3px;")
+        header.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(header)
 
         # Chat panel
@@ -4602,8 +4603,8 @@ class ChatView(QWidget):
         self._msg_scroll = QScrollArea()
         self._msg_scroll.setWidgetResizable(True)
         self._msg_scroll.setStyleSheet(f"""
-            QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px; border: none; }}
+            QScrollArea {{ background: transparent;  }}
+            QScrollBar:vertical {{ background: {ADMIN_PANEL}; width: 6px;  }}
             QScrollBar::handle:vertical {{ background: {PALETTE['panel_light']}; border-radius: 3px; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
@@ -4629,12 +4630,12 @@ class ChatView(QWidget):
             QLineEdit {{
                 background: {PALETTE['input_bg']};
                 color: {PALETTE['text']};
-                border: 1px solid rgba(255, 255, 255, 20);
+                
                 border-radius: 6px;
                 padding: 0 12px;
             }}
             QLineEdit:focus {{
-                border: 1px solid {PALETTE['accent']};
+                
             }}
         """)
         self._input.returnPressed.connect(self._send)
@@ -4647,7 +4648,7 @@ class ChatView(QWidget):
             QPushButton {{
                 background: {PALETTE['accent']};
                 color: #ffffff;
-                border: none;
+                
                 border-radius: 6px;
                 padding: 0 20px;
             }}
@@ -4684,7 +4685,7 @@ class ChatView(QWidget):
         bubble.setStyleSheet(f"""
             QFrame {{
                 background: {bg};
-                border: 1px solid {PALETTE['bubble_border']};
+                
                 border-radius: 10px;
             }}
         """)
@@ -4695,11 +4696,11 @@ class ChatView(QWidget):
 
         sender = QLabel("ADMIN" if is_admin else "PORTAL")
         sender.setFont(QFont(ADMIN_MONO, 7))
-        sender.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 1px;")
+        sender.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  letter-spacing: 1px;")
 
         msg = QLabel(text)
         msg.setFont(QFont("Segoe UI", 10))
-        msg.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+        msg.setStyleSheet(f"color: {color}; background: transparent; ")
         msg.setWordWrap(True)
         msg.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
@@ -4732,7 +4733,7 @@ class ScreenshotView(QWidget):
         # Header
         header = QLabel("SCREENSHOTS")
         header.setFont(QFont(ADMIN_MONO, 8, QFont.Weight.Bold))
-        header.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none; letter-spacing: 3px;")
+        header.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent;  letter-spacing: 3px;")
         layout.addWidget(header)
 
         # Screenshot display panel
@@ -4744,14 +4745,14 @@ class ScreenshotView(QWidget):
         self._shot_label = QLabel("No screenshots received")
         self._shot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._shot_label.setFont(QFont(ADMIN_MONO, 10))
-        self._shot_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none;")
+        self._shot_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; ")
         self._shot_label.setMinimumHeight(300)
         shot_layout.addWidget(self._shot_label, 1)
 
         # Info bar
         self._shot_info = QLabel("")
         self._shot_info.setFont(QFont(ADMIN_MONO, 8))
-        self._shot_info.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; border: none;")
+        self._shot_info.setStyleSheet(f"color: {ADMIN_HUD_DIM}; background: transparent; ")
         shot_layout.addWidget(self._shot_info)
 
         layout.addWidget(self._shot_panel, 1)
@@ -4828,21 +4829,21 @@ class MagnetAgent(QWidget):
         # Title
         title_area = QWidget()
         title_area.setFixedHeight(48)
-        title_area.setStyleSheet("background: transparent; border: none;")
+        title_area.setStyleSheet("background: transparent; ")
         title_layout = QHBoxLayout(title_area)
         title_layout.setContentsMargins(16, 0, 8, 0)
         title_layout.setSpacing(8)
 
         title = QLabel("Magnet")
         title.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-        title.setStyleSheet(f"color: {PALETTE['text']}; background: transparent; border: none; letter-spacing: 0px;")
+        title.setStyleSheet(f"color: {PALETTE['text']}; background: transparent;  letter-spacing: 0px;")
         title_layout.addWidget(title)
         title_layout.addStretch()
 
         min_btn = QPushButton("-")
         min_btn.setFixedSize(24, 24)
         min_btn.setStyleSheet("""
-            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 12px; border: none; }
+            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 12px;  }
             QPushButton:hover { background: #2a2a45; color: #f0f0f5; }
         """)
         min_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -4852,7 +4853,7 @@ class MagnetAgent(QWidget):
         self._max_btn = QPushButton("□")
         self._max_btn.setFixedSize(24, 24)
         self._max_btn.setStyleSheet("""
-            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 11px; border: none; }
+            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 11px;  }
             QPushButton:hover { background: #2a2a45; color: #f0f0f5; }
         """)
         self._max_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -4862,7 +4863,7 @@ class MagnetAgent(QWidget):
         close_btn = QPushButton("x")
         close_btn.setFixedSize(24, 24)
         close_btn.setStyleSheet("""
-            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 12px; border: none; }
+            QPushButton { background: transparent; color: #8b8b9a; border-radius: 12px; font-size: 12px;  }
             QPushButton:hover { background: #8b3a3a; color: #f0f0f5; }
         """)
         close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -4873,16 +4874,16 @@ class MagnetAgent(QWidget):
         # Connection status
         status_area = QWidget()
         status_area.setFixedHeight(36)
-        status_area.setStyleSheet("background: transparent; border: none;")
+        status_area.setStyleSheet("background: transparent; ")
         status_layout = QHBoxLayout(status_area)
         status_layout.setContentsMargins(16, 0, 16, 0)
         status_layout.setSpacing(8)
         self._conn_dot = QLabel()
         self._conn_dot.setFixedSize(8, 8)
-        self._conn_dot.setStyleSheet(f"background: {PALETTE['success']}; border-radius: 4px; border: none;")
+        self._conn_dot.setStyleSheet(f"background: {PALETTE['success']}; border-radius: 4px; ")
         self._conn_text = QLabel("CONNECTED")
         self._conn_text.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
-        self._conn_text.setStyleSheet(f"color: {PALETTE['success']}; background: transparent; border: none; letter-spacing: 1px;")
+        self._conn_text.setStyleSheet(f"color: {PALETTE['success']}; background: transparent;  letter-spacing: 1px;")
         status_layout.addWidget(self._conn_dot)
         status_layout.addWidget(self._conn_text)
         status_layout.addStretch()
@@ -4890,7 +4891,7 @@ class MagnetAgent(QWidget):
 
         # Nav
         nav_container = QWidget()
-        nav_container.setStyleSheet("background: transparent; border: none;")
+        nav_container.setStyleSheet("background: transparent; ")
         nav_layout = QVBoxLayout(nav_container)
         nav_layout.setContentsMargins(0, 8, 0, 8)
         nav_layout.setSpacing(2)
@@ -4937,7 +4938,7 @@ class MagnetAgent(QWidget):
         self._orb_status = QLabel("IDLE")
         self._orb_status.setFont(QFont(ADMIN_MONO, 7, QFont.Weight.Bold))
         self._orb_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._orb_status.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent; border: none; letter-spacing: 2px;")
+        self._orb_status.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  letter-spacing: 2px;")
         self._sidebar_layout.addWidget(self._orb_status)
         self._sidebar_layout.addSpacing(12)
 
@@ -5659,7 +5660,7 @@ class MagnetAgent(QWidget):
     def _update_orb_state(self, state):
         info, color = STATE_INFO.get(state, ("UNKNOWN", PALETTE["muted"]))
         self._orb_status.setText(info)
-        self._orb_status.setStyleSheet(f"color: {color}; background: transparent; border: none; letter-spacing: 2px;")
+        self._orb_status.setStyleSheet(f"color: {color}; background: transparent;  letter-spacing: 2px;")
 
     def _update_uptime(self):
         elapsed = time.time() - self._start_time

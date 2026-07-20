@@ -23,7 +23,6 @@ def build_global_stylesheet(theme) -> str:
     accent = c(theme.accent)
     accent_hover = c(theme.accent_hover)
     on_accent = c(theme.on_accent)
-    border = c(theme.border)
     success = c(theme.success)
     warning = c(theme.warning)
     error = c(theme.error)
@@ -52,7 +51,6 @@ QLabel {{
 QPushButton {{
     background: {surface};
     color: {text};
-    border: 1px solid {border};
     border-radius: 10px;
     padding: 10px 16px;
     font-size: 13px;
@@ -61,48 +59,41 @@ QPushButton {{
 
 QPushButton:hover {{
     background: {elevated};
-    border: 1px solid {accent};
 }}
 
 QPushButton:pressed, QPushButton:checked {{
     background: {accent};
     color: {on_accent};
-    border: 1px solid {accent};
 }}
 
 QPushButton:disabled {{
     background: {panel};
     color: {muted};
-    border: 1px solid {border};
 }}
 
 /* Primary / destructive accents via object names -------------------- */
 QPushButton#primary {{
     background: {accent};
     color: {on_accent};
-    border: 1px solid {accent};
 }}
-QPushButton#primary:hover {{ background: {accent_hover}; border: 1px solid {accent_hover}; }}
+QPushButton#primary:hover {{ background: {accent_hover}; }}
 
 QPushButton#danger {{
     background: rgba(235, 90, 90, 0.12);
     color: {error};
-    border: 1px solid rgba(235, 90, 90, 0.45);
 }}
-QPushButton#danger:hover {{ background: rgba(235, 90, 90, 0.22); border: 1px solid {error}; }}
+QPushButton#danger:hover {{ background: rgba(235, 90, 90, 0.22); }}
 
 QPushButton#success {{
     background: rgba(40, 200, 110, 0.12);
     color: {success};
-    border: 1px solid rgba(40, 200, 110, 0.45);
 }}
-QPushButton#success:hover {{ background: rgba(40, 200, 110, 0.22); border: 1px solid {success}; }}
+QPushButton#success:hover {{ background: rgba(40, 200, 110, 0.22); }}
 
 /* Inputs ---------------------------------------------------------- */
 QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {{
     background: {surface};
     color: {text};
-    border: 1px solid {border};
     border-radius: 10px;
     padding: 8px;
     font-size: 13px;
@@ -110,7 +101,7 @@ QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {{
 }}
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{
-    border: 1px solid {accent};
+    background: {elevated};
 }}
 
 QLineEdit::placeholder, QTextEdit::placeholder, QComboBox::placeholder {{
@@ -118,21 +109,12 @@ QLineEdit::placeholder, QTextEdit::placeholder, QComboBox::placeholder {{
 }}
 
 QComboBox::drop-down {{
-    border: none;
     width: 24px;
-}}
-
-QComboBox::down-arrow {{
-    image: none;
-    border: none;
-    width: 0px;
-    height: 0px;
 }}
 
 QComboBox QAbstractItemView {{
     background: {surface};
     color: {text};
-    border: 1px solid {border};
     border-radius: 10px;
     selection-background-color: {accent};
     padding: 4px;
@@ -142,7 +124,6 @@ QComboBox QAbstractItemView {{
 QListWidget, QListView, QTreeWidget, QTreeView {{
     background: {surface};
     color: {text};
-    border: 1px solid {border};
     border-radius: 12px;
     outline: none;
     padding: 6px;
@@ -165,14 +146,13 @@ QListWidget::item:hover, QListView::item:hover, QTreeView::item:hover {{
 QHeaderView::section {{
     background: {panel};
     color: {text};
-    border: none;
     padding: 8px;
     font-weight: 600;
     border-radius: 6px;
 }}
 
 QSplitter::handle {{
-    background: {border};
+    background: rgba(160, 175, 200, 0.25);
     border-radius: 2px;
 }}
 QSplitter::handle:horizontal {{ width: 4px; }}
@@ -182,7 +162,6 @@ QSplitter::handle:vertical {{ height: 4px; }}
 QMenu {{
     background: {panel};
     color: {text};
-    border: 1px solid {border};
     border-radius: 10px;
     padding: 6px;
 }}
@@ -200,7 +179,6 @@ QMenu::item:selected {{
 QToolTip {{
     background: {panel};
     color: {text};
-    border: 1px solid {border};
     border-radius: 8px;
     padding: 6px 10px;
     font-size: 12px;
@@ -250,7 +228,6 @@ QScrollBar::add-line, QScrollBar::sub-line {{
 QGroupBox {{
     background: {panel};
     color: {text};
-    border: 1px solid {border};
     border-radius: 14px;
     padding: 16px;
     margin-top: 12px;
@@ -267,14 +244,12 @@ QGroupBox::title {{
 
 QTabWidget::pane {{
     background: {panel};
-    border: 1px solid {border};
     border-radius: 14px;
 }}
 
 QTabBar::tab {{
     background: {surface};
     color: {text};
-    border: 1px solid {border};
     border-radius: 8px;
     padding: 8px 16px;
     margin: 4px;
@@ -284,7 +259,6 @@ QTabBar::tab {{
 QTabBar::tab:selected {{
     background: {accent};
     color: {on_accent};
-    border: 1px solid {accent};
 }}
 
 QTabBar::tab:hover {{
@@ -334,7 +308,6 @@ def apply_global_styles(app, theme):
     """Apply the v2 design system to a QApplication instance."""
     app.setStyleSheet(build_global_stylesheet(theme))
 
-    # Set a clean cross-platform typeface; Qt will fall back gracefully.
     from PySide6.QtGui import QFont
     try:
         f = QFont("Inter", 10)
@@ -383,14 +356,11 @@ def backend_reset_stylesheet(theme) -> str:
     text = c(theme.text)
     accent = c(theme.accent)
     on_accent = c(theme.on_accent)
-    border = c(theme.border)
-    muted = c(theme.muted)
 
     return f"""
 #backendPage QPushButton {{
     background: {surface} !important;
     color: {text} !important;
-    border: 1px solid {border} !important;
     border-radius: 10px !important;
     padding: 10px 16px !important;
     font-size: 13px !important;
@@ -398,30 +368,26 @@ def backend_reset_stylesheet(theme) -> str:
 }}
 #backendPage QPushButton:hover {{
     background: {elevated} !important;
-    border: 1px solid {accent} !important;
 }}
 #backendPage QPushButton:pressed, #backendPage QPushButton:checked {{
     background: {accent} !important;
     color: {on_accent} !important;
-    border: 1px solid {accent} !important;
 }}
 
 #backendPage QLineEdit, #backendPage QTextEdit, #backendPage QComboBox {{
     background: {surface} !important;
     color: {text} !important;
-    border: 1px solid {border} !important;
     border-radius: 10px !important;
     padding: 8px !important;
     font-size: 13px !important;
 }}
 #backendPage QLineEdit:focus, #backendPage QTextEdit:focus, #backendPage QComboBox:focus {{
-    border: 1px solid {accent} !important;
+    background: {elevated} !important;
 }}
 
 #backendPage QLabel {{
     color: {text} !important;
     background: transparent !important;
-    border: none !important;
 }}
 #backendPage QLabel#title {{
     color: {accent} !important;
@@ -432,7 +398,6 @@ def backend_reset_stylesheet(theme) -> str:
 #backendPage QListWidget, #backendPage QListView, #backendPage QTreeWidget, #backendPage QTreeView {{
     background: {surface} !important;
     color: {text} !important;
-    border: 1px solid {border} !important;
     border-radius: 12px !important;
     padding: 6px !important;
 }}
@@ -447,7 +412,6 @@ def backend_reset_stylesheet(theme) -> str:
 #backendPage QHeaderView::section {{
     background: {panel} !important;
     color: {text} !important;
-    border: none !important;
     padding: 8px !important;
     font-weight: 600 !important;
 }}

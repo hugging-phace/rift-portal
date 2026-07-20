@@ -90,7 +90,7 @@ class Card(QFrame):
         self.theme = theme
         self.callback = callback
         self.setStyleSheet(
-            f"background: {_css_color(theme.panel)}; border: 1px solid {_css_color(theme.border)}; border-radius: 14px;"
+            f"background: {_css_color(theme.panel)};  border-radius: 14px;"
         )
         if callback:
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -140,7 +140,7 @@ class FormCard(QFrame):
         super().__init__(parent)
         self.theme = theme
         self.setStyleSheet(
-            f"background: {_css_color(theme.panel)}; border: 1px solid {_css_color(theme.border)}; border-radius: 14px;"
+            f"background: {_css_color(theme.panel)};  border-radius: 14px;"
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
@@ -185,7 +185,7 @@ class PageWidget(QFrame):
         self._bg.setObjectName("pageBg")
         self._bg.setFrameShape(QFrame.Shape.NoFrame)
         self._bg.setStyleSheet(
-            f"background-color: {_css_color(bg_color)}; border: 1px solid {_css_color(theme.border)}; border-radius: 18px;"
+            f"background-color: {_css_color(bg_color)};  border-radius: 18px;"
         )
         self._bg.setGeometry(self.rect())
         self._bg.lower()
@@ -242,7 +242,7 @@ class SidebarPanel(QFrame):
     def _apply_theme(self, theme: Theme):
         self.setStyleSheet(
             f"background: {_css_color(theme.panel)}; "
-            f"border: 1px solid {_css_color(theme.border)}; "
+            f" "
             f"border-radius: 18px;"
         )
 
@@ -317,7 +317,7 @@ class AgentWindow(QWidget):
             btn.setFixedSize(24, 24)
             btn.setStyleSheet(
                 f"QPushButton {{ background: transparent; color: {_css_color(theme.muted)}; "
-                f"border-radius: 6px; border: none; font-size: 13px; }}"
+                f"border-radius: 6px;  font-size: 13px; }}"
                 f"QPushButton:hover {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; }}"
             )
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -437,9 +437,9 @@ class AgentWindow(QWidget):
         border = _css_color(t.accent if active else t.border)
         hover = _css_color(t.hover)
         return (
-            f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {border}; "
+            f"QPushButton {{ background: {bg}; color: {fg};  "
             f"border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 600; text-align: left; }}"
-            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; border: 1px solid {_css_color(t.accent)}; }}"
+            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)};  }}"
         )
 
     def _build_sessions_page(self):
@@ -472,8 +472,8 @@ class AgentWindow(QWidget):
         label_style = f"color: {_css_color(t.muted)}; font-size: 12px;"
         input_style = (
             f"QLineEdit, QTextEdit, QComboBox {{ background: {_css_color(t.hover)}; "
-            f"color: {_css_color(t.text)}; border: none; border-radius: 8px; padding: 8px; font-size: 13px; }}"
-            f"QComboBox::drop-down {{ border: none; }}"
+            f"color: {_css_color(t.text)};  border-radius: 8px; padding: 8px; font-size: 13px; }}"
+            f"QComboBox::drop-down {{  }}"
             f"QComboBox QAbstractItemView {{ background: {_css_color(t.panel)}; "
             f"color: {_css_color(t.text)}; selection-background-color: {_css_color(t.accent)}; }}"
         )
@@ -519,7 +519,7 @@ class AgentWindow(QWidget):
 
         send_btn = QPushButton("Send invite")
         send_btn.setStyleSheet(
-            f"QPushButton {{ background: {_css_color(t.accent)}; color: white; border: none; "
+            f"QPushButton {{ background: {_css_color(t.accent)}; color: white;  "
             f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
             f"QPushButton:hover {{ background: {_css_color(t.hover)}; }}"
         )
@@ -553,7 +553,7 @@ class AgentWindow(QWidget):
         label_style = f"color: {_css_color(t.muted)}; font-size: 12px;"
         input_style = (
             f"QLineEdit {{ background: {_css_color(t.hover)}; "
-            f"color: {_css_color(t.text)}; border: none; border-radius: 8px; padding: 8px; font-size: 13px; }}"
+            f"color: {_css_color(t.text)};  border-radius: 8px; padding: 8px; font-size: 13px; }}"
         )
 
         host_lbl = QLabel("SMTP host")
@@ -595,7 +595,7 @@ class AgentWindow(QWidget):
 
         save_btn = QPushButton("Save SMTP credentials")
         save_btn.setStyleSheet(
-            f"QPushButton {{ background: {_css_color(t.accent)}; color: white; border: none; "
+            f"QPushButton {{ background: {_css_color(t.accent)}; color: white;  "
             f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
             f"QPushButton:hover {{ background: {_css_color(t.hover)}; }}"
         )
@@ -631,7 +631,7 @@ class AgentWindow(QWidget):
         ):
             btn = QPushButton(provider)
             btn.setStyleSheet(
-                f"QPushButton {{ background: {color}; color: white; border: none; "
+                f"QPushButton {{ background: {color}; color: white;  "
                 f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
                 f"QPushButton:hover {{ background: #555555; }}"
             )
@@ -809,7 +809,7 @@ class AgentWindow(QWidget):
         manual_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         manual_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(self.theme.hover)}; color: {_css_color(self.theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 8px 14px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 8px 14px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(self.theme.accent)}; }}"
         )
         manual_btn.clicked.connect(self._open_command_window)
@@ -830,7 +830,7 @@ class AgentWindow(QWidget):
         btn = QPushButton(label)
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn.setStyleSheet(
-            f"QPushButton {{ background: {_css_color(t.hover)}; color: {_css_color(t.text)}; border: none; "
+            f"QPushButton {{ background: {_css_color(t.hover)}; color: {_css_color(t.text)};  "
             f"border-radius: 6px; padding: 6px 12px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(t.accent)}; }}"
         )
@@ -868,7 +868,7 @@ class AgentWindow(QWidget):
         output.setText(output_text)
         output.setStyleSheet(
             f"QTextEdit {{ background: {_css_color(self.theme.hover)}; "
-            f"color: {_css_color(self.theme.text)}; border: none; border-radius: 8px; "
+            f"color: {_css_color(self.theme.text)};  border-radius: 8px; "
             f"padding: 8px; }}"
         )
         layout.addWidget(output, 1)
@@ -879,14 +879,14 @@ class AgentWindow(QWidget):
         line.setPlaceholderText(placeholder)
         line.setStyleSheet(
             f"QLineEdit {{ background: {_css_color(self.theme.hover)}; "
-            f"color: {_css_color(self.theme.text)}; border: none; border-radius: 6px; "
+            f"color: {_css_color(self.theme.text)};  border-radius: 6px; "
             f"padding: 6px; }}"
         )
         btn = QPushButton("Send")
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(self.theme.accent)}; "
-            f"color: {_css_color(self.theme.text)}; border: none; border-radius: 6px; "
+            f"color: {_css_color(self.theme.text)};  border-radius: 6px; "
             f"padding: 6px 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(self.theme.hover)}; }}"
         )
@@ -958,9 +958,9 @@ class AgentWindow(QWidget):
         border = _css_color(t.accent if active else t.border)
         hover = _css_color(t.hover)
         return (
-            f"QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {border}; "
+            f"QPushButton {{ background: {bg}; color: {fg};  "
             f"border-radius: 8px; padding: 8px 14px 8px 28px; font-size: 12px; font-weight: 600; text-align: left; }}"
-            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)}; border: 1px solid {_css_color(t.accent)}; }}"
+            f"QPushButton:hover {{ background: {hover}; color: {_css_color(t.text)};  }}"
         )
 
     def _make_session_sub_button(self, name: str) -> QPushButton:
@@ -1092,7 +1092,7 @@ class VisionWindow(QWidget):
         self.interact_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.interact_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
             f"QPushButton:checked {{ background: {_css_color(theme.accent)}; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
         )
@@ -1244,7 +1244,7 @@ class FileManagerWindow(QFrame):
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn.setStyleSheet(
                 f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-                f"border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; }}"
+                f" border-radius: 6px; padding: 6px 12px; font-size: 12px; }}"
                 f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
             )
             btn.clicked.connect(lambda checked=False, a=label: self._toolbar_action(a))
@@ -1314,7 +1314,7 @@ class FileManagerWindow(QFrame):
         self.search_edit.setMaximumHeight(26)
         self.search_edit.setStyleSheet(
             f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 5px; padding: 3px 6px; font-size: 11px; }}"
+            f" border-radius: 5px; padding: 3px 6px; font-size: 11px; }}"
         )
         self.search_edit.textChanged.connect(self._on_search)
         search_row.addWidget(search_lbl)
@@ -1329,7 +1329,7 @@ class FileManagerWindow(QFrame):
             f"QTreeView::item {{ padding: 6px; background: transparent; }}"
             f"QTreeView::item:selected {{ background: {_css_color(theme.accent)}; }}"
             f"QHeaderView::section {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; padding: 6px; font-weight: 600; }}"
+            f" padding: 6px; font-weight: 600; }}"
         )
         files_palette = self.files.palette()
         files_palette.setColor(QPalette.Base, theme.hover)
@@ -1426,7 +1426,7 @@ class FileManagerWindow(QFrame):
             self.files.setCurrentItem(item)
         menu = QMenu(self)
         menu.setStyleSheet(
-            f"QMenu {{ background: {_css_color(self.theme.panel)}; color: {_css_color(self.theme.text)}; border: none; padding: 4px; }}"
+            f"QMenu {{ background: {_css_color(self.theme.panel)}; color: {_css_color(self.theme.text)};  padding: 4px; }}"
             f"QMenu::item {{ padding: 6px 12px; }}"
             f"QMenu::item:selected {{ background: {_css_color(self.theme.accent)}; }}"
         )
@@ -1609,7 +1609,7 @@ class TerminalWindow(QWidget):
         clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         clear_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
         )
         clear_btn.clicked.connect(self._clear)
@@ -1620,7 +1620,7 @@ class TerminalWindow(QWidget):
         self.output.setReadOnly(True)
         self.output.setStyleSheet(
             f"QTextEdit {{ background: {_css_color(theme.panel)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 12px; padding: 10px; font-family: monospace; }}"
+            f" border-radius: 12px; padding: 10px; font-family: monospace; }}"
         )
         self.output.setText(
             "Remote terminal connected to Atlas Workstation.\n"
@@ -1635,14 +1635,14 @@ class TerminalWindow(QWidget):
         self.input.setPlaceholderText("Enter command...")
         self.input.setStyleSheet(
             f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 6px; font-family: monospace; }}"
+            f" border-radius: 6px; padding: 6px; font-family: monospace; }}"
         )
         self.input.returnPressed.connect(self._run_command)
         run_btn = QPushButton("Run")
         run_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         run_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.hover)}; }}"
         )
         run_btn.clicked.connect(self._run_command)
@@ -1725,7 +1725,7 @@ class ScreenshotWindow(QWidget):
         save_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         save_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.hover)}; }}"
         )
         save_btn.clicked.connect(self._save)
@@ -1778,7 +1778,7 @@ class CommandWindow(QWidget):
         clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         clear_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 5px 12px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
         )
         clear_btn.clicked.connect(self._clear)
@@ -1793,7 +1793,7 @@ class CommandWindow(QWidget):
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn.setStyleSheet(
                 f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-                f"border: none; border-radius: 6px; padding: 5px 10px; font-size: 11px; }}"
+                f" border-radius: 6px; padding: 5px 10px; font-size: 11px; }}"
                 f"QPushButton:hover {{ background: {_css_color(theme.accent)}; }}"
             )
             btn.clicked.connect(lambda checked=False, c=label: self._send(c))
@@ -1805,7 +1805,7 @@ class CommandWindow(QWidget):
         self.output.setReadOnly(True)
         self.output.setStyleSheet(
             f"QTextEdit {{ background: {_css_color(theme.panel)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 12px; padding: 10px; font-family: monospace; }}"
+            f" border-radius: 12px; padding: 10px; font-family: monospace; }}"
         )
         self.output.setText("Enter a classic Magnet command below.\n")
         layout.addWidget(self.output, 1)
@@ -1816,14 +1816,14 @@ class CommandWindow(QWidget):
         self.input.setPlaceholderText("Type .screenshot, .feed, .xnavigate, etc.")
         self.input.setStyleSheet(
             f"QLineEdit {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 6px; font-family: monospace; }}"
+            f" border-radius: 6px; padding: 6px; font-family: monospace; }}"
         )
         self.input.returnPressed.connect(self._send_from_input)
         run_btn = QPushButton("Run")
         run_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         run_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.text)}; "
-            f"border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
+            f" border-radius: 6px; padding: 6px 14px; font-size: 12px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.hover)}; }}"
         )
         run_btn.clicked.connect(self._send_from_input)
