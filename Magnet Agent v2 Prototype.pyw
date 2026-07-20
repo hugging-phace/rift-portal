@@ -128,13 +128,6 @@ class PageWidget(QFrame):
         )
         self._bg.setGeometry(self.rect())
         self._bg.lower()
-
-        shadow = QGraphicsDropShadowEffect(self._bg)
-        shadow.setBlurRadius(28)
-        shadow.setColor(QColor(0, 0, 0, 75))
-        shadow.setOffset(0, 6)
-        self._bg.setGraphicsEffect(shadow)
-
         self.setAutoFillBackground(False)
 
         layout = QVBoxLayout(self)
