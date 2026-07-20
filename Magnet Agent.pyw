@@ -5182,6 +5182,9 @@ class MagnetAgent(QWidget):
 
     def _switch_view(self, index):
         if self._stack.currentIndex() == index:
+            # Still update nav highlight so the correct tab is shown on launch.
+            for i, btn in enumerate(self._nav_buttons):
+                btn.set_active(i == index and index < len(self._nav_buttons))
             return
         # If we're leaving the session detail view, ask the admin to confirm first.
         if self._stack.currentIndex() == 4 and index != 4 and self._current_session is not None:
