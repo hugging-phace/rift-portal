@@ -105,6 +105,7 @@ class ChatWindow(QWidget):
         )
         self.theme = theme
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.setFixedSize(360, 520)
 
         container = QFrame(self)
@@ -214,6 +215,7 @@ class DropWindow(QWidget):
         )
         self.theme = theme
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.setAcceptDrops(True)
         self.setFixedSize(420, 360)
 
@@ -334,6 +336,7 @@ class FlyoutPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self._corner_radius = 18
         self.setFixedWidth(260)
 
