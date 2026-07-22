@@ -119,6 +119,10 @@ jobs:
             --add-data "Magnet Agent v2 Prototype.pyw:." \
             --add-data "Magnet Agent.pyw:." \
             "Magnet Agent v2.pyw"
+      - name: Fix macOS app permissions and signature
+        run: |
+          chmod +x "dist/MagnetAgent.app/Contents/MacOS/MagnetAgent"
+          codesign --force --deep --sign - "dist/MagnetAgent.app"
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:

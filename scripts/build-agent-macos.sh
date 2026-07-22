@@ -48,4 +48,11 @@ pyinstaller --windowed --name "MagnetAgent" \
   --add-data "Magnet Agent.pyw:." \
   "Magnet Agent v2.pyw"
 
+# Ensure the main executable is executable and ad-hoc signed so macOS will
+# open the app on a fresh download.
+chmod +x "dist/MagnetAgent.app/Contents/MacOS/MagnetAgent"
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "dist/MagnetAgent.app"
+fi
+
 echo "Built: dist/MagnetAgent.app"
