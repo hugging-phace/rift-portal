@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QSystemTrayIcon, QMenu,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFrame, QTextEdit, QScrollArea, QListWidget, QSizePolicy,
-    QGraphicsDropShadowEffect,
+    QGraphicsDropShadowEffect, QMessageBox,
 )
 
 from magnet_v2_glyph import Theme, GlyphRenderer, _is_dark_mode, _css_color
@@ -976,6 +976,15 @@ class ClientApp(QApplication):
         self.flyout.set_status(state)
 
     def _do_quit(self):
+        reply = QMessageBox.question(
+            self.flyout,
+            "Quit Magnet Client",
+            "Are you sure you want to quit?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         self._running = False
         try:
             self.backend._poll_worker.stop()

@@ -11,6 +11,7 @@ import json
 import math
 import os
 import random
+import ssl
 import sys
 import time
 import urllib.request
@@ -71,15 +72,26 @@ def _log(msg):
     """Minimal debug log for the Agent console."""
     print(msg, flush=True)
 
+
+def _ssl_context():
+    """Return an SSL context with bundled or system root certificates."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def _firebase_put(path, data):
     try:
         url = f"{FIREBASE_URL}/{path}.json"
         payload = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(url, data=payload, method="PUT",
                                       headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             return resp.status in (200, 204)
-    except Exception:
+    except Exception as e:
+        _log(f"_firebase_put({path}) error: {e}")
         return False
 
 
@@ -88,9 +100,10 @@ def _firebase_get(path):
         url = f"{FIREBASE_URL}/{path}.json"
         req = urllib.request.Request(url,
                                       headers={"User-Agent": "MagnetAgent/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        _log(f"_firebase_get({path}) error: {e}")
         return None
 
 
@@ -98,9 +111,10 @@ def _firebase_delete(path):
     try:
         url = f"{FIREBASE_URL}/{path}.json"
         req = urllib.request.Request(url, method="DELETE")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             return resp.status in (200, 204)
-    except Exception:
+    except Exception as e:
+        _log(f"_firebase_delete({path}) error: {e}")
         return False
 
 # ------------------------------------------------------------------
