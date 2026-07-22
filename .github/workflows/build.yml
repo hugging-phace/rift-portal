@@ -241,10 +241,13 @@ jobs:
       - name: Fix macOS client permissions and signature
         run: |
           chmod +x "dist/MagnetClient.app/Contents/MacOS/MagnetClient"
-          codesign --force --deep --sign - "dist/MagnetClient.app"
-          # The client is a tray/menu-bar app; hide the dock icon.
+          # The client is a tray/menu-bar app; hide the dock icon before signing
+          # so the signature stays valid.
+          /usr/libexec/PlistBuddy -c "Set :LSUIElement true" \
+            "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
             "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || true
+          codesign --force --deep --sign - "dist/MagnetClient.app"
       - name: Upload macOS client artifact
         uses: actions/upload-artifact@v4
         with:
