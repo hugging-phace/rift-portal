@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject
-from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor
+from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QWidget, QSystemTrayIcon, QMenu,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
