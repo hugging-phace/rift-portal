@@ -322,12 +322,12 @@ class FlyoutPanel(QWidget):
     quit_requested = Signal()
 
     def __init__(self, theme: Theme, parent=None):
+        # Use a Popup so the flyout dismisses when the user clicks outside it,
+        # but the tray icon stays and can reopen it.
         super().__init__(
             parent,
-            Qt.WindowType.Window
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool,
+            Qt.WindowType.Popup
+            | Qt.WindowType.FramelessWindowHint,
         )
         self.theme = theme
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -776,8 +776,9 @@ class ClientApp(QApplication):
 
         apply_global_styles(self, self.theme)
 
-        # Tray glyph renderers at all OS chrome sizes
-        self._glyphs = {size: GlyphRenderer(size=size) for size in (16, 18, 24, 32)}
+        # Tray glyph renderers at larger sizes so the menu-bar / tray icon
+        # is crisp and visible on retina / high-DPI displays.
+        self._glyphs = {size: GlyphRenderer(size=size) for size in (32, 48, 64, 128)}
         for g in self._glyphs.values():
             g.set_state("idle")
 
@@ -830,11 +831,26 @@ class ClientApp(QApplication):
         menu.addAction(quit_action)
         self.tray.setContextMenu(menu)
 
+    def _tray_pixmap(self, renderer: GlyphRenderer, size: int) -> QPixmap:
+        """Render the glyph, crop the unused margins, and scale it so it fills
+        the tray/menu-bar square as much as possible."""
+        pm = renderer.pixmap(self.theme, color=self.theme.glyph_tray)
+        # Visible bounds of the three-node glyph (with a little breathing room).
+        margin_x = int(size * 0.20)
+        margin_y = int(size * 0.25)
+        crop_w = int(size * 0.60)
+        crop_h = int(size * 0.50)
+        cropped = pm.copy(margin_x, margin_y, crop_w, crop_h)
+        return cropped.scaled(
+            size, size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
     def _update_tray_icon(self):
         icon = QIcon()
-        for g in self._glyphs.values():
-            pm = g.pixmap(self.theme, color=self.theme.glyph_tray)
-            icon.addPixmap(pm)
+        for size, g in self._glyphs.items():
+            icon.addPixmap(self._tray_pixmap(g, size))
         icon.setIsMask(sys.platform == "darwin")
         self.tray.setIcon(icon)
 
