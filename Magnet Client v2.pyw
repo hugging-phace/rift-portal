@@ -322,16 +322,18 @@ class FlyoutPanel(QWidget):
     quit_requested = Signal()
 
     def __init__(self, theme: Theme, parent=None):
-        # Use a Popup so the flyout dismisses when the user clicks outside it,
-        # but the tray icon stays and can reopen it.
+        # Use a Tool + FramelessWindowHint + StaysOnTopHint so the flyout
+        # toggles from the tray icon and stays available without a taskbar entry.
         super().__init__(
             parent,
-            Qt.WindowType.Popup
-            | Qt.WindowType.FramelessWindowHint,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint,
         )
         self.theme = theme
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self._corner_radius = 18
         self.setFixedWidth(260)
 
@@ -432,6 +434,11 @@ class FlyoutPanel(QWidget):
         painter.setBrush(QBrush(QColor(255, 255, 255, 10 if self.theme.dark else 18)))
         painter.drawPath(highlight)
         painter.end()
+
+    def closeEvent(self, event):
+        # Hide instead of close so the flyout can be reopened from the tray.
+        event.ignore()
+        self.hide()
 
     def _update_glyph_pixmap(self):
         self._glyph_lbl.setPixmap(
