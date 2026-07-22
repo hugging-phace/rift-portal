@@ -11,15 +11,19 @@ A matching MagnetOS v2 client for the support recipient.
   and soft shadows as the agent console.
 
 Backend wiring (Firebase chat/command polling, file upload, vision stream)
-is intentionally separated into this file’s TODO placeholders so the UI/UX
-can be reviewed before full integration.
+uses the production logic from Magnet Client.pyw, adapted to drive the v2
+flyout, glyph, chat, and drop windows.
 """
 
+import importlib.machinery
 import math
+import platform
 import sys
+import threading
+import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject
 from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QSystemTrayIcon, QMenu,
@@ -30,6 +34,13 @@ from PySide6.QtWidgets import (
 
 from magnet_v2_glyph import Theme, GlyphRenderer, _is_dark_mode, _css_color
 from magnet_v2_theme import apply_global_styles, apply_shadow
+
+# ------------------------------------------------------------------
+# Load the production backend from Magnet Client.pyw without invoking its UI
+# ------------------------------------------------------------------
+_LEGACY_PATH = Path(__file__).resolve().parent / "Magnet Client.pyw"
+_legacy_loader = importlib.machinery.SourceFileLoader("legacy", str(_LEGACY_PATH))
+legacy = _legacy_loader.load_module()
 
 
 # ------------------------------------------------------------------
@@ -157,7 +168,7 @@ class ChatWindow(QWidget):
         send_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         send_btn.setStyleSheet(
             f"QPushButton {{ background: {_css_color(theme.accent)}; color: {_css_color(theme.on_accent)}; "
-            f"border-radius: 17px; font-size: 16px; font-weight: 600; }}"
+            f"border-radius: 17px; font-size: 13px; font-weight: 700; padding: 0; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.accent_hover)}; }}"
         )
         send_btn.clicked.connect(self._send)
@@ -170,10 +181,14 @@ class ChatWindow(QWidget):
         if not text:
             return
         self.input.clear()
-        self.add_message(text, is_atlas=False)
         self.message_sent.emit(text)
 
-    def add_message(self, text: str, is_atlas: bool = True):
+    def add_message(self, sender_or_text, text=None, is_atlas: bool = True):
+        if text is None:
+            text = sender_or_text
+            sender = "Atlas" if is_atlas else "You"
+        else:
+            sender = sender_or_text
         bubble = ChatBubble(text, is_atlas, self.theme, self.messages)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
         QTimer.singleShot(10, self._scroll_to_bottom)
@@ -321,48 +336,48 @@ class FlyoutPanel(QWidget):
         self.setFixedWidth(260)
 
         self._build_ui()
-        apply_shadow(self, theme, blur=26, offset=(0, 8), alpha=55)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
 
-        # Header glyph + title
+        # Header: glyph + title + status
         header = QVBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(6)
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._glyph = GlyphRenderer(size=64)
+        self._glyph = GlyphRenderer(size=56)
         self._glyph.set_state("idle")
         self._glyph_lbl = QLabel()
-        self._glyph_lbl.setFixedSize(64, 64)
+        self._glyph_lbl.setFixedSize(56, 56)
         self._update_glyph_pixmap()
         header.addWidget(self._glyph_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._title = QLabel("Magnet Client")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setStyleSheet(
-            f"color: {_css_color(self.theme.text)}; font-size: 18px; font-weight: 600; background: transparent;"
+            f"color: {_css_color(self.theme.text)}; font-size: 17px; font-weight: 600; background: transparent;"
         )
         header.addWidget(self._title, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addLayout(header)
 
         # Status dot + text
         status_layout = QHBoxLayout()
         status_layout.setSpacing(6)
+        status_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_dot = QLabel("●")
         self._status_dot.setStyleSheet(
             f"color: {_css_color(self.theme.accent)}; font-size: 10px; background: transparent;"
         )
         self._status_text = QLabel("Connected to Atlas")
         self._status_text.setStyleSheet(
-            f"color: {_css_color(self.theme.muted)}; font-size: 12px; background: transparent;"
+            f"color: {_css_color(self.theme.muted)}; font-size: 11px; background: transparent;"
         )
         status_layout.addWidget(self._status_dot)
         status_layout.addWidget(self._status_text, alignment=Qt.AlignmentFlag.AlignVCenter)
-        status_layout.addStretch()
-        layout.addLayout(status_layout)
+        header.addLayout(status_layout)
+
+        layout.addLayout(header)
 
         # Action buttons
         self._buttons = []
@@ -381,10 +396,12 @@ class FlyoutPanel(QWidget):
             self._buttons.append(btn)
             layout.addWidget(btn)
 
+        layout.addStretch()
+
     def _button_stylesheet(self) -> str:
         t = self.theme
         bg = _css_color(t.surface)
-        hover = _css_color(t.hover)
+        hover = _css_color(t.accent)
         text = _css_color(t.text)
         return (
             f"QPushButton {{ background: {bg}; color: {text}; border-radius: 10px; "
@@ -399,6 +416,14 @@ class FlyoutPanel(QWidget):
         path.addRoundedRect(0, 0, self.width(), self.height(), self._corner_radius, self._corner_radius)
         painter.fillPath(path, QBrush(self.theme.panel))
 
+        border = QColor(self.theme.muted)
+        border.setAlpha(200)
+        pen = QPen(border)
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
         highlight = QPainterPath()
         highlight.addRoundedRect(1, 1, self.width() - 2, self.height() / 2.5,
                                  self._corner_radius - 1, self._corner_radius - 1)
@@ -411,7 +436,7 @@ class FlyoutPanel(QWidget):
     def _update_glyph_pixmap(self):
         self._glyph_lbl.setPixmap(
             self._glyph.pixmap(self.theme, color=self.theme.glyph).scaled(
-                64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                56, 56, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
         )
 
@@ -433,6 +458,9 @@ class FlyoutPanel(QWidget):
         self._glyph.set_state(state)
         self._update_glyph_pixmap()
 
+    def set_status_text(self, text: str):
+        self._status_text.setText(text)
+
     def update_glyph(self):
         self._glyph.update(0.1)
         self._update_glyph_pixmap()
@@ -440,10 +468,10 @@ class FlyoutPanel(QWidget):
     def apply_theme(self, theme: Theme):
         self.theme = theme
         self._title.setStyleSheet(
-            f"color: {_css_color(theme.text)}; font-size: 18px; font-weight: 600; background: transparent;"
+            f"color: {_css_color(theme.text)}; font-size: 17px; font-weight: 600; background: transparent;"
         )
         self._status_text.setStyleSheet(
-            f"color: {_css_color(theme.muted)}; font-size: 12px; background: transparent;"
+            f"color: {_css_color(theme.muted)}; font-size: 11px; background: transparent;"
         )
         for btn in self._buttons:
             btn.setStyleSheet(self._button_stylesheet())
@@ -466,6 +494,267 @@ class FlyoutPanel(QWidget):
 
     def _emit(self, signal: str):
         getattr(self, signal).emit()
+
+
+# ------------------------------------------------------------------
+# Glyph stub that bridges the legacy backend orb to the v2 flyout glyph
+# ------------------------------------------------------------------
+class GlyphStub(QObject):
+    clicked = Signal()
+    state_changed = Signal(str)
+
+    def __init__(self, owner: "ClientApp"):
+        super().__init__(owner)
+        self._owner = owner
+        self._state = "idle"
+        self._restore_timer = QTimer(self)
+        self._restore_timer.setSingleShot(True)
+        self._restore_timer.timeout.connect(self._do_restore)
+
+    def _map_state(self, state: str) -> str:
+        mapping = {
+            "command": "processing",
+            "terminal": "viewing",
+            "alert": "file_transfer",
+            "feedme": "file_transfer",
+            "opening": "connected",
+            "vision": "viewing",
+            "awaiting": "idle",
+            "portal_opening": "connected",
+            "portal_closing": "disconnected",
+            "test_pulse": "processing",
+        }
+        return mapping.get(state, state)
+
+    def _set_v2_state(self, state: str):
+        mapped = self._map_state(state)
+        self._owner.set_state(mapped)
+
+    def set_state(self, state: str):
+        self._state = state
+        self._set_v2_state(state)
+        self.state_changed.emit(state)
+
+    def set_paused(self, paused: bool):
+        if paused:
+            self._set_v2_state("paused")
+        else:
+            self._set_v2_state(self._state if self._state not in ("paused",) else "connected")
+
+    def _do_restore(self):
+        self._set_v2_state(self._state)
+
+    def _flash_state(self, state: str, ms: int):
+        self._set_v2_state(state)
+        self._restore_timer.start(ms)
+
+    def flash_alert(self):
+        self._flash_state("file_transfer", 900)
+
+    def flash_command(self):
+        self._flash_state("processing", 900)
+
+    def flash_terminal(self):
+        self._flash_state("viewing", 900)
+
+    def start_portal_opening(self):
+        self._flash_state("connected", 1200)
+
+
+# ------------------------------------------------------------------
+# Backend host — production client logic driving the v2 UI
+# ------------------------------------------------------------------
+class Backend(legacy.ModernPortalWindow):
+    """Hidden backend host. It reuses the Firebase/chat/file/vision logic from
+    Magnet Client.pyw but feeds the v2 tray flyout, glyph, chat, and drop windows."""
+
+    def __init__(self, owner, flyout, chat, drop, portal_folder):
+        # Skip the legacy portal/orb UI; initialize only the QWidget base.
+        QWidget.__init__(self)
+        self._owner = owner
+        self.portal_folder = portal_folder
+        self.executed_file = Path(__file__).resolve()
+        self.user_closed_once = False
+
+        self._flyout = flyout
+        self.chat = chat
+        self._drop = drop
+        self.chat_visible = False
+        self.orb = GlyphStub(owner)
+
+        # State mirrored from ModernPortalWindow.__init__
+        self.paused = False
+        self.muted = False
+        self._running = True
+        self._registered = False
+        self._executed_file = Path(__file__).resolve().parent / ".portal_executed.json"
+        self._executed_ids = self._load_executed_ids()
+        self._seen_chat_ids = set()
+        self._color_override = None
+        self._idle_color = legacy.PALETTE["accent"]
+        self._active_color = legacy.PALETTE["active"]
+        self._dormant = False
+        self._reconnect_window = False
+        self._poll_now = False
+        self._vision_last_click = 0
+        self._force_close_pending = False
+
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._on_reconnect_timeout)
+
+        self._poll_thread = QThread(self)
+        self._poll_worker = legacy.PortalWorker(self)
+        self._poll_worker.moveToThread(self._poll_thread)
+        self._poll_worker.new_command.connect(self._on_new_command)
+        self._poll_thread.started.connect(self._poll_worker.run)
+        self._poll_thread.start()
+
+        self._chat_thread = QThread(self)
+        self._chat_worker = legacy.ChatWorker(self)
+        self._chat_worker.moveToThread(self._chat_thread)
+        self._chat_worker.chat_message.connect(self._receive_atlas_message)
+        self._chat_thread.started.connect(self._chat_worker.run)
+        self._chat_thread.start()
+
+        self._reminder_timer = QTimer(self)
+        self._reminder_timer.timeout.connect(self._send_reminder)
+        self._reminder_timer.start(legacy.REMINDER_INTERVAL * 1000)
+
+        self._vision_streamer = None
+        self._set_status("Awaiting connection", self._idle_color)
+
+    # ------------------------------------------------------------------
+    # UI overrides — route legacy status/chat calls to the v2 UI
+    # ------------------------------------------------------------------
+    def _set_status(self, text, color=None):
+        self._flyout.set_status_text(text)
+
+    def _show_chat(self):
+        self.chat_visible = True
+        self._owner._position_popout(self.chat)
+        self.chat.show()
+        self.chat.raise_()
+        self.chat.activateWindow()
+
+    def _hide_chat(self):
+        self.chat_visible = False
+        self.chat.hide()
+
+    def _set_always_on_top(self, always_on_top):
+        pass
+
+    def _on_orb_state_changed(self, state):
+        pass
+
+    def _on_mute_toggled(self, muted):
+        self.muted = muted
+
+    # ------------------------------------------------------------------
+    # Lifecycle overrides — no legacy dialogs, just clean v2 behavior
+    # ------------------------------------------------------------------
+    def _enter_dormant(self):
+        self._dormant = True
+        self._reconnect_window = False
+        self._force_close_pending = False
+        self._reconnect_timer.stop()
+        self.orb.set_state("awaiting")
+        self._set_status("Dormant — waiting to reconnect")
+
+    def _exit_dormant(self):
+        self._dormant = False
+        self._reconnect_window = False
+        self._force_close_pending = False
+        self._reconnect_timer.stop()
+        self.orb.set_state("connected")
+        self._set_status("Connected")
+
+    def _start_reconnect_window(self):
+        self._dormant = True
+        self._reconnect_window = True
+        self._force_close_pending = False
+        self._poll_now = True
+        self._reconnect_timer.start(5 * 60 * 1000)
+        self.orb.set_state("portal_opening")
+        self._set_status("Reconnecting...")
+
+    def _on_reconnect_timeout(self):
+        self._enter_dormant()
+
+    def _show_agent_closed_dialog(self):
+        self._enter_dormant()
+
+    def _on_reopen_rift(self):
+        self._start_reconnect_window()
+
+    def _acknowledge_agent_close(self):
+        self.user_closed_once = True
+        self._force_close_pending = False
+        try:
+            legacy._firebase_put(f"sessions/{legacy.SESSION_ID}/status", "user-closed")
+        except Exception:
+            pass
+        self._hide_chat()
+        self._set_status("Session closed")
+        self._owner._do_quit()
+
+    def _user_close(self):
+        self.user_closed_once = True
+        try:
+            legacy._firebase_put(f"sessions/{legacy.SESSION_ID}/status", "user-closed")
+        except Exception:
+            pass
+        self._hide_chat()
+        self._set_status("Rift closed")
+
+    def _final_user_close(self):
+        try:
+            legacy._mark_session_closed()
+        except Exception:
+            pass
+        self._running = False
+        try:
+            self._poll_worker.stop()
+            self._chat_worker.stop()
+            self._poll_thread.quit()
+            self._chat_thread.quit()
+            self._poll_thread.wait(1000)
+            self._chat_thread.wait(1000)
+        except Exception:
+            pass
+        self._set_status("Rift ended")
+        self._owner._do_quit()
+
+    def _force_close(self):
+        if self.user_closed_once:
+            self._final_user_close()
+            return
+        if getattr(self, "_force_close_pending", False):
+            return
+        self._force_close_pending = True
+        self._enter_dormant()
+
+    def _on_close_clicked(self):
+        if not self.user_closed_once:
+            self._user_close()
+        else:
+            self._final_user_close()
+
+    def closeEvent(self, event):
+        event.accept()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                path = url.toLocalFile()
+                if path:
+                    self._handle_dropped_file(path)
 
 
 # ------------------------------------------------------------------
@@ -503,13 +792,7 @@ class ClientApp(QApplication):
         self.flyout.quit_requested.connect(self._do_quit)
 
         self.chat = ChatWindow(self.theme)
-        self.chat.message_sent.connect(self._on_chat_sent)
-
         self.drop = DropWindow(self.theme)
-        self.drop.file_dropped.connect(self._on_file_dropped)
-
-        self._paused = False
-        self._viewing = False
 
         self.tray = QSystemTrayIcon(self)
         self._setup_context_menu()
@@ -521,7 +804,13 @@ class ClientApp(QApplication):
         self._animation_timer.timeout.connect(self._animate_glyph)
         self._animation_timer.start(100)
 
-        # Introduce the flyout briefly on first launch
+        # Production backend host
+        portal_folder = str(Path.home())
+        self.backend = Backend(self, self.flyout, self.chat, self.drop, portal_folder)
+        self.chat.message_sent.connect(self.backend._send_user_message)
+        self.drop.file_dropped.connect(self.backend._handle_dropped_file)
+
+        self._start_backend()
         QTimer.singleShot(300, self._show_flyout)
 
     def _setup_context_menu(self):
@@ -595,40 +884,46 @@ class ClientApp(QApplication):
         self.chat.raise_()
 
     def _on_chat_sent(self, text: str):
-        # Placeholder: echo Atlas reply and set state to processing briefly
         self.flyout.set_status("processing")
+        self.backend._send_user_message(text)
         QTimer.singleShot(1200, lambda: self.flyout.set_status("connected"))
-        QTimer.singleShot(800, lambda: self.chat.add_message(f"Received: {text}", is_atlas=True))
 
     def _open_drop(self):
         self._hide_flyout()
-        self.flyout.set_status("file_transfer")
+        self.backend.orb.set_state("feedme")
+        self.backend._set_status("Drop files here")
         self._position_popout(self.drop)
         self.drop.show()
         self.drop.raise_()
 
     def _on_file_dropped(self, path: str):
-        # Placeholder: real implementation will upload to Firebase
-        self.chat.add_message(f"File queued: {Path(path).name}", is_atlas=True)
+        self.backend._handle_dropped_file(path)
 
     def _toggle_viewing(self):
         self._hide_flyout()
-        self._viewing = not self._viewing
-        state = "viewing" if self._viewing else "connected"
-        self.flyout.set_status(state)
-        self.chat.add_message(
-            "Atlas can now see your screen." if self._viewing else "Screen sharing stopped.",
-            is_atlas=True,
-        )
+        self.backend._on_vision_click()
 
     def _toggle_pause(self):
-        self._paused = not self._paused
-        state = "paused" if self._paused else "connected"
-        self.flyout.set_status(state)
+        self.backend.paused = not self.backend.paused
+        self.backend._poll_worker.set_paused(self.backend.paused)
+        self.backend.orb.set_paused(self.backend.paused)
         btn = self.flyout._buttons[3]
-        btn.setText("Resume" if self._paused else "Pause")
+        btn.setText("Resume" if self.backend.paused else "Pause")
+        state = "paused" if self.backend.paused else "connected"
+        self.flyout.set_status(state)
 
     def _do_quit(self):
+        self._running = False
+        try:
+            self.backend._poll_worker.stop()
+            self.backend._chat_worker.stop()
+            self.backend._poll_thread.quit()
+            self.backend._chat_thread.quit()
+            self.backend._poll_thread.wait(1000)
+            self.backend._chat_thread.wait(1000)
+            self.backend._reminder_timer.stop()
+        except Exception:
+            pass
         self.quit()
 
     def _position_popout(self, window: QWidget):
@@ -649,6 +944,39 @@ class ClientApp(QApplication):
             g.set_state(state)
         self.flyout.set_status(state)
         self._update_tray_icon()
+
+    def _start_backend(self):
+        def _backend_init():
+            try:
+                user = legacy._get_user()
+                host = platform.node() or "unknown"
+                registered = legacy._register_session(user, host, self.backend.portal_folder)
+                if registered:
+                    self.backend._registered = True
+                    threading.Thread(target=_heartbeat_loop, daemon=True).start()
+                legacy._post_to_discord(
+                    f"**Rift Opened (v2)**\n"
+                    f"Session: `{legacy.SESSION_ID}`\n"
+                    f"User: {user}@{host}\n"
+                    f"Time: {legacy.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                    f"Python: {platform.python_version()}\n"
+                    f"Folder: {self.backend.portal_folder}"
+                )
+                legacy._wait_for_webhook(timeout=30)
+                legacy._clear_chat_and_commands()
+            except Exception as e:
+                legacy._portal_log(f"_backend_init error: {e}")
+
+        def _heartbeat_loop():
+            while getattr(self.backend, "_running", True):
+                try:
+                    if getattr(self.backend, "_registered", False) and not getattr(self.backend, "_dormant", False):
+                        legacy._update_last_seen()
+                except Exception as e:
+                    legacy._portal_log(f"_heartbeat_loop error: {e}")
+                time.sleep(30)
+
+        threading.Thread(target=_backend_init, daemon=True).start()
 
 
 def main():
