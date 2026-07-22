@@ -37,6 +37,8 @@ pyinstaller --windowed --name "MagnetAgent" \
   --hidden-import zipfile \
   --hidden-import hashlib \
   --hidden-import tempfile \
+  --hidden-import certifi \
+  --collect-data certifi \
   --hidden-import magnet_vision \
   --hidden-import magnet_orb \
   --hidden-import magnet_v2_glyph \

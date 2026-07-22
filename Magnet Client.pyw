@@ -17,6 +17,7 @@ import os
 import random
 import platform
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -60,6 +61,20 @@ WEBHOOK_URL = (
 FIREBASE_URL = "https://mbe-portal-default-rtdb.firebaseio.com"
 POLL_INTERVAL = 1.5
 CHAT_POLL_INTERVAL = 1
+
+
+def _ssl_context():
+    """Return an SSL context with bundled or system root certificates.
+
+    In PyInstaller bundles the `certifi` package may provide the CA bundle.
+    If not available, fall back to the system default context so we at least
+    get a descriptive error instead of a silent failure.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
 REMINDER_INTERVAL = 25 * 60
 CREATE_NO_WINDOW = (
     subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
@@ -115,7 +130,7 @@ def _post_to_discord(content):
             _active_webhook_url, data=payload,
             headers={"Content-Type": "application/json",
                      "User-Agent": f"PythonPortal/{PORTAL_VERSION}"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_context()) as resp:
             ok = resp.status in (200, 204)
             _portal_log(f"_post_to_discord: status={resp.status}, ok={ok}")
             return ok
@@ -150,9 +165,10 @@ def _post_file_to_discord(content, file_path):
             _active_webhook_url, data=body,
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
                      "User-Agent": f"PythonPortal/{PORTAL_VERSION}"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
             return resp.status in (200, 204)
-    except Exception:
+    except Exception as e:
+        _portal_log(f"_post_file_to_discord error: {e}")
         return _post_to_discord(content + "\n\n[File attachment failed]")
 
 
@@ -162,9 +178,10 @@ def _firebase_put(path, data):
         payload = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(url, data=payload, method="PUT",
                                       headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             return resp.status in (200, 204)
-    except Exception:
+    except Exception as e:
+        _portal_log(f"_firebase_put({path}) error: {e}")
         return False
 
 
@@ -173,9 +190,10 @@ def _firebase_get(path):
         url = f"{FIREBASE_URL}/{path}.json"
         req = urllib.request.Request(url,
                                       headers={"User-Agent": f"PythonPortal/{PORTAL_VERSION}"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        _portal_log(f"_firebase_get({path}) error: {e}")
         return None
 
 
@@ -183,9 +201,10 @@ def _firebase_delete(path):
     try:
         url = f"{FIREBASE_URL}/{path}.json"
         req = urllib.request.Request(url, method="DELETE")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             return resp.status in (200, 204)
-    except Exception:
+    except Exception as e:
+        _portal_log(f"_firebase_delete({path}) error: {e}")
         return False
 
 
@@ -456,7 +475,7 @@ def _download_file(url, dest_path):
     try:
         req = urllib.request.Request(
             url, headers={"User-Agent": f"PythonPortal/{PORTAL_VERSION}"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as resp:
             data = resp.read()
         Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
         with open(dest_path, "wb") as f:
