@@ -197,6 +197,7 @@ class ChatWindow(QWidget):
         if not text:
             return
         self.input.clear()
+        self.add_message("You", text, is_atlas=False)
         self.message_sent.emit(text)
 
     def add_message(self, sender_or_text, text=None, is_atlas: bool = True):
@@ -453,14 +454,16 @@ class FlyoutPanel(QWidget):
         )
 
     def paintEvent(self, event):
-        # Single solid panel color with rounded corners; no border or top
-        # highlight so the flyout is one calm surface.
+        # Slightly translucent solid panel color with rounded corners; no
+        # border or top highlight so the flyout is one calm surface.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), self._corner_radius, self._corner_radius)
-        painter.fillPath(path, QBrush(self.theme.panel))
+        panel_color = QColor(self.theme.panel)
+        panel_color.setAlphaF(0.96)
+        painter.fillPath(path, QBrush(panel_color))
         painter.end()
 
     def closeEvent(self, event):
