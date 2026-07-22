@@ -17,6 +17,7 @@ flyout, glyph, chat, and drop windows.
 
 import importlib.machinery
 import math
+import os
 import platform
 import sys
 import threading
@@ -106,6 +107,7 @@ class ChatWindow(QWidget):
         self.theme = theme
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setFixedSize(360, 520)
 
         container = QFrame(self)
@@ -177,6 +179,19 @@ class ChatWindow(QWidget):
         input_row.addWidget(send_btn)
         layout.addLayout(input_row)
 
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_chat_btn = QPushButton("Close chat")
+        close_chat_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_chat_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {_css_color(self.theme.muted)}; "
+            f"border: none; font-size: 12px; }}"
+            f"QPushButton:hover {{ color: {_css_color(self.theme.text)}; }}"
+        )
+        close_chat_btn.clicked.connect(self.hide)
+        close_row.addWidget(close_chat_btn)
+        layout.addLayout(close_row)
+
     def _send(self):
         text = self.input.text().strip()
         if not text:
@@ -198,6 +213,10 @@ class ChatWindow(QWidget):
         vbar = self.scroll.verticalScrollBar()
         vbar.setValue(vbar.maximum())
 
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+
 
 # ------------------------------------------------------------------
 # Feed-me drop window
@@ -216,6 +235,7 @@ class DropWindow(QWidget):
         self.theme = theme
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAcceptDrops(True)
         self.setFixedSize(420, 360)
 
@@ -312,6 +332,10 @@ class DropWindow(QWidget):
         self.file_list.setVisible(False)
         self.file_list.clear()
 
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+
 
 # ------------------------------------------------------------------
 # Main flyout panel
@@ -347,10 +371,24 @@ class FlyoutPanel(QWidget):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        # Header: glyph + title + status
+        # Header: glyph + title + status, with a small close button at top-right
         header = QVBoxLayout()
         header.setSpacing(6)
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        top_bar = QHBoxLayout()
+        top_bar.addStretch()
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: {_css_color(self.theme.muted)}; "
+            f"border-radius: 11px; font-size: 14px; }}"
+            f"QPushButton:hover {{ background: {_css_color(self.theme.error)}; color: white; }}"
+        )
+        close_btn.clicked.connect(self.hide)
+        top_bar.addWidget(close_btn)
+        header.addLayout(top_bar)
 
         self._glyph = GlyphRenderer(size=56)
         self._glyph.set_state("idle")
@@ -415,27 +453,14 @@ class FlyoutPanel(QWidget):
         )
 
     def paintEvent(self, event):
+        # Single solid panel color with rounded corners; no border or top
+        # highlight so the flyout is one calm surface.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), self._corner_radius, self._corner_radius)
         painter.fillPath(path, QBrush(self.theme.panel))
-
-        border = QColor(self.theme.muted)
-        border.setAlpha(200)
-        pen = QPen(border)
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(path)
-
-        highlight = QPainterPath()
-        highlight.addRoundedRect(1, 1, self.width() - 2, self.height() / 2.5,
-                                 self._corner_radius - 1, self._corner_radius - 1)
-        painter.setClipPath(highlight)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(255, 255, 255, 10 if self.theme.dark else 18)))
-        painter.drawPath(highlight)
         painter.end()
 
     def closeEvent(self, event):
@@ -578,6 +603,8 @@ class Backend(legacy.ModernPortalWindow):
     """Hidden backend host. It reuses the Firebase/chat/file/vision logic from
     Magnet Client.pyw but feeds the v2 tray flyout, glyph, chat, and drop windows."""
 
+    status_changed = Signal(str)
+
     def __init__(self, owner, flyout, chat, drop, portal_folder):
         # Skip the legacy portal/orb UI; initialize only the QWidget base.
         QWidget.__init__(self)
@@ -632,13 +659,14 @@ class Backend(legacy.ModernPortalWindow):
         self._reminder_timer.start(legacy.REMINDER_INTERVAL * 1000)
 
         self._vision_streamer = None
-        self._set_status("Awaiting connection", self._idle_color)
 
     # ------------------------------------------------------------------
     # UI overrides — route legacy status/chat calls to the v2 UI
     # ------------------------------------------------------------------
     def _set_status(self, text, color=None):
-        self._flyout.set_status_text(text)
+        # Route all status text to the UI thread via a signal so background
+        # polling threads can call this safely.
+        self.status_changed.emit(text)
 
     def _show_chat(self):
         self.chat_visible = True
@@ -818,6 +846,8 @@ class ClientApp(QApplication):
         # Production backend host
         portal_folder = str(Path.home())
         self.backend = Backend(self, self.flyout, self.chat, self.drop, portal_folder)
+        self.backend.status_changed.connect(self.flyout.set_status_text)
+        self.backend._set_status("Awaiting connection")
         self.chat.message_sent.connect(self.backend._send_user_message)
         self.drop.file_dropped.connect(self.backend._handle_dropped_file)
 
@@ -882,6 +912,8 @@ class ClientApp(QApplication):
     def _show_flyout(self):
         if self.flyout.isVisible():
             return
+        self.chat.hide()
+        self.drop.hide()
         self.flyout.adjustSize()
         tray_geo = self.tray.geometry()
         screen = self.primaryScreen().availableGeometry()
@@ -956,6 +988,8 @@ class ClientApp(QApplication):
         except Exception:
             pass
         self.quit()
+        # If background polling threads don't finish quickly, force exit.
+        QTimer.singleShot(1500, lambda: os._exit(0))
 
     def _position_popout(self, window: QWidget):
         screen = self.primaryScreen().availableGeometry()
@@ -981,10 +1015,14 @@ class ClientApp(QApplication):
             try:
                 user = legacy._get_user()
                 host = platform.node() or "unknown"
+                self.backend._set_status("Registering session...")
                 registered = legacy._register_session(user, host, self.backend.portal_folder)
                 if registered:
                     self.backend._registered = True
+                    self.backend._set_status("Session registered — waiting for Atlas")
                     threading.Thread(target=_heartbeat_loop, daemon=True).start()
+                else:
+                    self.backend._set_status("Session registration failed")
                 legacy._post_to_discord(
                     f"**Rift Opened (v2)**\n"
                     f"Session: `{legacy.SESSION_ID}`\n"
@@ -994,8 +1032,11 @@ class ClientApp(QApplication):
                     f"Folder: {self.backend.portal_folder}"
                 )
                 legacy._wait_for_webhook(timeout=30)
+                if self.backend._registered:
+                    self.backend._set_status("Ready — waiting for Atlas")
                 legacy._clear_chat_and_commands()
             except Exception as e:
+                self.backend._set_status(f"Connection error: {e}")
                 legacy._portal_log(f"_backend_init error: {e}")
 
         def _heartbeat_loop():
