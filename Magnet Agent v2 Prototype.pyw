@@ -287,7 +287,8 @@ class AgentWindow(QWidget):
         self._drag_pos = None
 
         self.setWindowTitle("Magnet Agent")
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        # Use the native window chrome so macOS gets rounded corners and the
+        # standard traffic-light buttons, and Windows keeps its native title bar.
         self.resize(1200, 820)
         self.setMinimumSize(1000, 640)
         self.setAutoFillBackground(True)
@@ -299,36 +300,9 @@ class AgentWindow(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Title bar — thin; app name lives in the sidebar
-        title_bar = QWidget()
-        title_bar.setFixedHeight(32)
-        title_bar.setStyleSheet(
-            f"background: {_css_color(theme.surface)}; "
-            f"border-bottom: 1px solid {_css_color(theme.border)};"
-        )
-        title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(12, 0, 12, 0)
-        title_layout.setSpacing(6)
-
-        title_layout.addStretch()
-
-        for symbol, cb in (("−", self.showMinimized), ("□", self._toggle_max_restore), ("×", self.close)):
-            btn = QPushButton(symbol)
-            btn.setFixedSize(24, 24)
-            btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; color: {_css_color(theme.muted)}; "
-                f"border-radius: 6px;  font-size: 13px; }}"
-                f"QPushButton:hover {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; }}"
-            )
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.clicked.connect(cb)
-            title_layout.addWidget(btn)
-
-        main_layout.addWidget(title_bar)
-
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(20, 16, 20, 20)
+        body.setContentsMargins(20, 12, 20, 20)
         body.setSpacing(20)
 
         # Sidebar (detached floating panel)
@@ -1010,29 +984,6 @@ class AgentWindow(QWidget):
             is_active = index == 5
             self._session_sub_btn.setChecked(is_active)
             self._session_sub_btn.setStyleSheet(self._session_sub_stylesheet(is_active))
-
-    def _toggle_max_restore(self):
-        if self.isMaximized():
-            self.showNormal()
-        else:
-            self.showMaximized()
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            delta = event.globalPosition().toPoint() - self._drag_pos
-            self.move(self.pos() + delta)
-            self._drag_pos = event.globalPosition().toPoint()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = None
-        super().mouseReleaseEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
