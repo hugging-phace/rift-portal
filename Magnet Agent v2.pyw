@@ -56,6 +56,12 @@ CommandListView = _backend.CommandListView
 TerminalCommandsView = _backend.TerminalCommandsView
 SettingsView = _backend.SettingsView
 
+FileManagerWindow = _v2.FileManagerWindow
+CommandWindow = _v2.CommandWindow
+VisionWindow = _v2.VisionWindow
+ScreenshotWindow = _v2.ScreenshotWindow
+TerminalWindow = _v2.TerminalWindow
+
 
 # ------------------------------------------------------------------
 # Helpers
@@ -160,6 +166,57 @@ class _OrbAdapter:
 
 
 # ------------------------------------------------------------------
+# Session detail view that mirrors chat and results to the v2 UI widgets
+# ------------------------------------------------------------------
+class MirroringSessionDetailView(SessionDetailView):
+    """Hidden SessionDetailView that forwards results/chat to the visible v2 UI."""
+
+    def __init__(self, owner, parent=None):
+        super().__init__(parent)
+        self._owner = owner
+        self.setVisible(False)
+
+    def _format_result(self, result_type, title, content):
+        if result_type == "file_drop":
+            file_path = content.get("file", "") if isinstance(content, dict) else ""
+            return f"File received: {Path(file_path).name or 'file'}"
+        if result_type == "files":
+            files = content.get("files", {}) if isinstance(content, dict) else {}
+            return f"Files received: {len(files)} files"
+        if result_type == "error":
+            return f"Error — {title}:\n{content}"
+        if isinstance(content, (dict, list)):
+            try:
+                body = _backend.json.dumps(content, indent=2)[:1200]
+            except Exception:
+                body = str(content)
+            return f"{title}\n{body}"
+        return f"{title}\n{content}"
+
+    def add_result(self, result_type, title, content):
+        text = self._format_result(result_type, title, content)
+        self._owner._append_to_chat(text)
+        self._owner._append_to_command_window(text)
+
+    def add_screenshot(self, pixmap, title="Screenshot"):
+        try:
+            dialog = _backend.ImagePopoutDialog(pixmap, title, self._owner)
+            dialog.show()
+        except Exception:
+            pass
+        self._owner._append_to_chat(f"Screenshot received: {title}")
+
+    def _add_chat_bubble(self, text, is_admin=False):
+        super()._add_chat_bubble(text, is_admin)
+        prefix = "You:" if is_admin else "Atlas:"
+        self._owner._append_to_chat(f"{prefix} {text}")
+
+    def set_vision_frame(self, pixmap):
+        super().set_vision_frame(pixmap)
+        self._owner._update_vision_window(pixmap)
+
+
+# ------------------------------------------------------------------
 # Main window — v2 shell + production backend
 # ------------------------------------------------------------------
 class MagnetAgent(AgentWindow):
@@ -247,9 +304,12 @@ class MagnetAgent(AgentWindow):
         return page
 
     def _build_active_session_page(self):
-        page = BackendPage(self.theme, bg=self.theme.panel)
-        self._session_detail = SessionDetailView(page)
-        page._body.addWidget(self._session_detail, 1)
+        # Use the v2 prototype active-session layout (file manager, chat,
+        # quick commands, manual commands button) and keep a hidden
+        # SessionDetailView to drive the production backend.
+        page = super()._build_active_session_page()
+        self._session_detail = MirroringSessionDetailView(self, page)
+        self._session_detail.setVisible(False)
         return page
 
     # ---- Backend wiring ----
@@ -297,12 +357,116 @@ class MagnetAgent(AgentWindow):
 
         self._switch_view(0)
 
+    # ---- Chat / quick action / manual command overrides ----
+    def _on_chat_send(self, line, output):
+        text = line.text().strip()
+        line.clear()
+        if not text or not self._current_session:
+            return
+        output.append(f"You: {text}")
+        self._on_chat_sent(self._current_session.id, text)
+
+    def _on_quick_action(self, *args):
+        if not self._current_session:
+            return
+        if len(args) == 1:
+            action = args[0]
+            if action == "Files":
+                self._open_file_manager()
+                return
+            if action == "Terminal":
+                self._open_terminal()
+                return
+            if action == "Vision":
+                self._open_vision()
+            mapping = {
+                "Screenshot": "screenshot",
+                "Feed": "feedme",
+                "Pause": "paused",
+                "Pulse": "test_pulse",
+                "Vision": "vision",
+            }
+            backend_action = mapping.get(action, action.lower())
+        elif len(args) == 2:
+            backend_action = args[1]
+        else:
+            return
+        _backend.MagnetAgent._on_quick_action(self, self._current_session.id, backend_action)
+
+    def _run_magnet_command(self, cmd):
+        if not self._current_session:
+            return "No active session"
+        lower = cmd.lower().strip()
+        if lower.startswith(".xnavigate") or lower == ".navigate":
+            path = cmd[10:].strip() if lower.startswith(".xnavigate") else cmd[8:].strip()
+            path = path or "~"
+            self._file_manager._load_path(Path(os.path.expanduser(path)))
+            return f"Opened folder view: {path}"
+        if lower.startswith(".xterminal") or lower == ".terminal":
+            self._open_terminal()
+            return "Opened Terminal window"
+        if lower.startswith(".vision"):
+            self._on_quick_action("Vision")
+            return "Vision request sent"
+        if lower.startswith(".screenshot"):
+            self._on_quick_action("Screenshot")
+            return "Screenshot request sent"
+        if lower.startswith(".feed"):
+            self._on_quick_action("Feed")
+            return "Feed request sent"
+        if lower.startswith(".pause"):
+            self._on_quick_action("Pause")
+            return "Pause toggled"
+        if lower.startswith(".pulse"):
+            self._on_quick_action("Pulse")
+            return "Pulse sent"
+        self._on_command_sent(self._current_session.id, cmd)
+        return f"Sent to {self._current_session.name or 'Atlas Workstation'}: {cmd}"
+
+    def _open_vision(self):
+        self._vision_window = VisionWindow(self.theme)
+        self._vision_window.interact_btn.toggled.connect(self._on_vision_interact_toggled)
+        self._vision_window.show()
+
+    def _append_to_chat(self, text):
+        if getattr(self, "_chat_output", None) is not None:
+            self._chat_output.append(text)
+
+    def _append_to_command_window(self, text):
+        try:
+            window = getattr(self, "_command_window", None)
+            if window and window.isVisible():
+                window.output.append(text)
+        except Exception:
+            pass
+
+    def _update_vision_window(self, pixmap):
+        try:
+            window = getattr(self, "_vision_window", None)
+            if window and window.isVisible():
+                scaled = pixmap.scaled(
+                    window.video.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                window.video.setPixmap(scaled)
+        except Exception:
+            pass
+
     # ---- Overrides for view switching and theming ----
     def _open_session(self, session_id):
         for s in self._sessions:
             if s.id == session_id:
                 self._current_session = s
                 self._session_detail.set_session(s)
+                # Update the active-session page title.
+                page = self._stack.widget(5)
+                if page is not None:
+                    layout = page.layout()
+                    if layout is not None and layout.count() > 0:
+                        title_lbl = layout.itemAt(0).widget()
+                        if isinstance(title_lbl, QLabel):
+                            title_lbl.setText(s.name or "Session")
                 self._switch_view(5)
                 self._firebase_worker.watch_results(session_id)
                 if s.portal_connected:
@@ -382,7 +546,7 @@ def main():
     # Force the light pale-navy theme by default.
     theme = _make_agent_theme(False)
     apply_global_styles(app, theme)
-    glyph = GlyphRenderer(size=160)
+    glyph = GlyphRenderer(size=180, weight=1.3)
     glyph.set_state("idle")
 
     settings = QSettings()

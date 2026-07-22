@@ -89,8 +89,9 @@ class Theme:
 class GlyphRenderer:
     STATES = ("idle", "connected", "viewing", "processing", "file_transfer", "disconnected")
 
-    def __init__(self, size: int = 64):
+    def __init__(self, size: int = 64, weight: float = 1.0):
         self.size = size
+        self.weight = weight
         self.state = "idle"
         self._time = 0.0
         self._phase = 0.0
@@ -172,7 +173,7 @@ class GlyphRenderer:
         cx = cy = self.size / 2.0
         big_r = self.size * 0.14
         small_r = self.size * 0.08
-        line_width = max(1.0, self.size * 0.032)
+        line_width = max(1.0, self.size * 0.032 * self.weight)
 
         # Breathing animation for processing.
         breath = 1.0
