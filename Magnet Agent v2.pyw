@@ -546,7 +546,7 @@ def main():
     # Force the light pale-navy theme by default.
     theme = _make_agent_theme(False)
     apply_global_styles(app, theme)
-    glyph = GlyphRenderer(size=180, weight=1.3)
+    glyph = GlyphRenderer(size=160)
     glyph.set_state("idle")
 
     settings = QSettings()
