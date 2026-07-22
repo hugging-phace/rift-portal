@@ -8,11 +8,42 @@ on:
   workflow_dispatch:
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.create.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v2.0.${{ github.run_number }}"
+          cat > release_notes.md <<'EOF'
+          Standalone Magnet Agent and Magnet Client v2 built from `main`.
+
+          - **Agent (Windows)**: `MagnetAgent-windows.zip` (extract and run `MagnetAgent/MagnetAgent.exe`)
+          - **Agent (macOS)**: `MagnetAgent-macos.zip` (extract `MagnetAgent.app` and open)
+          - **Client (Windows)**: `MagnetClient-windows.zip` (extract and run `MagnetClient/MagnetClient.exe`)
+          - **Client (macOS)**: `MagnetClient-macos.zip` (extract `MagnetClient.app` and open; it lives in the menu bar)
+          EOF
+          gh release create "$TAG" \
+            --draft \
+            --title "MagnetOS v2 Build ${{ github.run_number }}" \
+            --target "${{ github.sha }}" \
+            --notes-file release_notes.md
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build-windows:
     runs-on: windows-latest
+    needs: [create-release]
+    if: always() && (needs.create-release.result == 'success' || github.ref != 'refs/heads/main')
     permissions:
-      contents: read
-      actions: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,17 +93,22 @@ jobs:
             --add-data "Magnet Agent v2 Prototype.pyw;." `
             --add-data "Magnet Agent.pyw;." `
             "Magnet Agent v2.pyw"
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MagnetAgent-windows
-          path: dist/MagnetAgent
+      - name: Upload Windows agent release asset
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          Compress-Archive -Path dist\MagnetAgent -DestinationPath MagnetAgent-windows.zip
+          gh release upload "$env:TAG" MagnetAgent-windows.zip --clobber
 
   build-macos:
     runs-on: macos-latest
+    needs: [create-release]
+    if: always() && (needs.create-release.result == 'success' || github.ref != 'refs/heads/main')
     permissions:
-      contents: read
-      actions: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -127,17 +163,21 @@ jobs:
         run: |
           chmod +x "dist/MagnetAgent.app/Contents/MacOS/MagnetAgent"
           codesign --force --deep --sign - "dist/MagnetAgent.app"
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MagnetAgent-macos
-          path: dist/MagnetAgent.app
+      - name: Upload macOS agent release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          zip -r MagnetAgent-macos.zip MagnetAgent.app
+          gh release upload "$TAG" MagnetAgent-macos.zip --clobber
 
   build-client-windows:
     runs-on: windows-latest
+    needs: [create-release]
+    if: always() && (needs.create-release.result == 'success' || github.ref != 'refs/heads/main')
     permissions:
-      contents: read
-      actions: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -186,17 +226,22 @@ jobs:
             --hidden-import mss `
             --add-data "Magnet Client.pyw;." `
             "Magnet Client v2.pyw"
-      - name: Upload Windows client artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MagnetClient-windows
-          path: dist/MagnetClient
+      - name: Upload Windows client release asset
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          Compress-Archive -Path dist\MagnetClient -DestinationPath MagnetClient-windows.zip
+          gh release upload "$env:TAG" MagnetClient-windows.zip --clobber
 
   build-client-macos:
     runs-on: macos-latest
+    needs: [create-release]
+    if: always() && (needs.create-release.result == 'success' || github.ref != 'refs/heads/main')
     permissions:
-      contents: read
-      actions: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -249,91 +294,29 @@ jobs:
       - name: Fix macOS client permissions and signature
         run: |
           chmod +x "dist/MagnetClient.app/Contents/MacOS/MagnetClient"
-          # The client is a tray/menu-bar app; hide the dock icon before signing
-          # so the signature stays valid.
           /usr/libexec/PlistBuddy -c "Set :LSUIElement true" \
             "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
             "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || true
           codesign --force --deep --sign - "dist/MagnetClient.app"
-      - name: Upload macOS client artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MagnetClient-macos
-          path: dist/MagnetClient.app
+      - name: Upload macOS client release asset
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          zip -r MagnetClient-macos.zip MagnetClient.app
+          gh release upload "$TAG" MagnetClient-macos.zip --clobber
 
-  release:
+  publish-release:
     runs-on: ubuntu-latest
-    needs: [build-windows, build-macos, build-client-windows, build-client-macos]
-    if: github.ref == 'refs/heads/main'
+    needs: [create-release, build-windows, build-macos, build-client-windows, build-client-macos]
+    if: github.ref == 'refs/heads/main' && success()
     permissions:
       contents: write
-      actions: read
     steps:
-      - name: Download Windows agent artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: MagnetAgent-windows
-          path: ./windows
-      - name: Download macOS agent artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: MagnetAgent-macos
-          path: ./macos
-      - name: Download Windows client artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: MagnetClient-windows
-          path: ./windows-client
-      - name: Download macOS client artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: MagnetClient-macos
-          path: ./macos-client
-      - name: Package release assets
-        run: |
-          # actions/download-artifact extracts the artifact contents directly into
-          # the download path. Re-stage the files under the expected top-level
-          # folder/app names before zipping.
-          mkdir -p MagnetAgent
-          cp -a windows/* MagnetAgent/ 2>/dev/null || true
-          zip -r MagnetAgent-windows.zip MagnetAgent
-
-          mkdir -p MagnetAgent.app
-          cp -a macos/* MagnetAgent.app/ 2>/dev/null || true
-          if [ -f MagnetAgent.app/Contents/MacOS/MagnetAgent ]; then
-            chmod +x MagnetAgent.app/Contents/MacOS/MagnetAgent
-          fi
-          find MagnetAgent.app/Contents/MacOS -type f -exec chmod +x {} +
-          zip -r MagnetAgent-macos.zip MagnetAgent.app
-
-          mkdir -p MagnetClient
-          cp -a windows-client/* MagnetClient/ 2>/dev/null || true
-          zip -r MagnetClient-windows.zip MagnetClient
-
-          mkdir -p MagnetClient.app
-          cp -a macos-client/* MagnetClient.app/ 2>/dev/null || true
-          if [ -f MagnetClient.app/Contents/MacOS/MagnetClient ]; then
-            chmod +x MagnetClient.app/Contents/MacOS/MagnetClient
-          fi
-          find MagnetClient.app/Contents/MacOS -type f -exec chmod +x {} +
-          zip -r MagnetClient-macos.zip MagnetClient.app
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v2.0.${{ github.run_number }}
-          name: MagnetOS v2 Build ${{ github.run_number }}
-          body: |
-            Standalone Magnet Agent and Magnet Client v2 built from `main`.
-
-            - **Agent (Windows)**: `MagnetAgent-windows.zip` (extract and run `MagnetAgent/MagnetAgent.exe`)
-            - **Agent (macOS)**: `MagnetAgent-macos.zip` (extract `MagnetAgent.app` and open)
-            - **Client (Windows)**: `MagnetClient-windows.zip` (extract and run `MagnetClient/MagnetClient.exe`)
-            - **Client (macOS)**: `MagnetClient-macos.zip` (extract `MagnetClient.app` and open; it lives in the menu bar)
-          files: |
-            MagnetAgent-windows.zip
-            MagnetAgent-macos.zip
-            MagnetClient-windows.zip
-            MagnetClient-macos.zip
-          generate_release_notes: false
-          make_latest: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false --latest
