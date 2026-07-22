@@ -825,6 +825,11 @@ class ClientApp(QApplication):
         QTimer.singleShot(300, self._show_flyout)
 
     def _setup_context_menu(self):
+        # On macOS, QSystemTrayIcon's setContextMenu crashes with a KitDefined
+        # NSEvent when the status item is clicked (Qt/Cocoa bug). Use the
+        # flyout as the only tray interaction on macOS.
+        if sys.platform == "darwin":
+            return
         menu = QMenu()
         show_action = QAction("Show Magnet Client", self)
         show_action.triggered.connect(self._show_flyout)
