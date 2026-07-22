@@ -47,12 +47,13 @@ pyinstaller --windowed --name "MagnetClient" \
   --add-data "Magnet Client.pyw:." \
   "Magnet Client v2.pyw"
 
-# Ensure the main executable is executable and ad-hoc signed.
+# Ensure the main executable is executable, set LSUIElement before signing,
+# and ad-hoc sign the bundle so macOS sees it as valid.
 chmod +x "dist/MagnetClient.app/Contents/MacOS/MagnetClient"
-codesign --force --deep --sign - "dist/MagnetClient.app"
-
-# The client is a tray/menu-bar app; hide the dock icon.
+/usr/libexec/PlistBuddy -c "Set :LSUIElement true" \
+  "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || \
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
   "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || true
+codesign --force --deep --sign - "dist/MagnetClient.app"
 
 echo "Built: dist/MagnetClient.app"
