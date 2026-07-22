@@ -180,7 +180,8 @@ class PageWidget(QFrame):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        bg_color = bg if bg is not None else theme.bg
+        bg_color = QColor(bg) if bg is not None else QColor(theme.bg)
+        bg_color.setAlphaF(0.96)
         self._bg = QFrame(self)
         self._bg.setObjectName("pageBg")
         self._bg.setFrameShape(QFrame.Shape.NoFrame)

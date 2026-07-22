@@ -197,6 +197,7 @@ class ChatWindow(QWidget):
         if not text:
             return
         self.input.clear()
+        self.add_message("You", text, is_atlas=False)
         self.message_sent.emit(text)
 
     def add_message(self, sender_or_text, text=None, is_atlas: bool = True):
@@ -453,14 +454,16 @@ class FlyoutPanel(QWidget):
         )
 
     def paintEvent(self, event):
-        # Single solid panel color with rounded corners; no border or top
-        # highlight so the flyout is one calm surface.
+        # Slightly translucent solid panel color with rounded corners; no
+        # border or top highlight so the flyout is one calm surface.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), self._corner_radius, self._corner_radius)
-        painter.fillPath(path, QBrush(self.theme.panel))
+        panel_color = QColor(self.theme.panel)
+        panel_color.setAlphaF(0.96)
+        painter.fillPath(path, QBrush(panel_color))
         painter.end()
 
     def closeEvent(self, event):
@@ -815,8 +818,9 @@ class ClientApp(QApplication):
         apply_global_styles(self, self.theme)
 
         # Tray glyph renderers at larger sizes so the menu-bar / tray icon
-        # is crisp and visible on retina / high-DPI displays.
-        self._glyphs = {size: GlyphRenderer(size=size) for size in (32, 48, 64, 128)}
+        # is crisp and visible on retina / high-DPI displays. Use a heavier
+        # stroke so the glyph stands out next to other menu-bar icons.
+        self._glyphs = {size: GlyphRenderer(size=size, weight=1.6) for size in (32, 48, 64, 128)}
         for g in self._glyphs.values():
             g.set_state("idle")
 
@@ -880,11 +884,11 @@ class ClientApp(QApplication):
         """Render the glyph, crop the unused margins, and scale it so it fills
         the tray/menu-bar square as much as possible."""
         pm = renderer.pixmap(self.theme, color=self.theme.glyph_tray)
-        # Visible bounds of the three-node glyph (with a little breathing room).
-        margin_x = int(size * 0.20)
-        margin_y = int(size * 0.25)
-        crop_w = int(size * 0.60)
-        crop_h = int(size * 0.50)
+        # Tight crop around the three-node glyph so it fills the tray square.
+        margin_x = int(size * 0.15)
+        margin_y = int(size * 0.20)
+        crop_w = int(size * 0.70)
+        crop_h = int(size * 0.60)
         cropped = pm.copy(margin_x, margin_y, crop_w, crop_h)
         return cropped.scaled(
             size, size,
