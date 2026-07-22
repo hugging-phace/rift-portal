@@ -100,7 +100,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.create-release.outputs.tag }}
         run: |
-          Compress-Archive -Path dist\MagnetAgent -DestinationPath MagnetAgent-windows.zip
+          Move-Item -Path dist\MagnetAgent -Destination MagnetAgent
+          Compress-Archive -Path MagnetAgent -DestinationPath MagnetAgent-windows.zip
           gh release upload "$env:TAG" MagnetAgent-windows.zip --clobber
 
   build-macos:
@@ -169,7 +170,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.create-release.outputs.tag }}
         run: |
-          zip -r MagnetAgent-macos.zip MagnetAgent.app
+          cd dist
+          zip -r ../MagnetAgent-macos.zip MagnetAgent.app
+          cd ..
           gh release upload "$TAG" MagnetAgent-macos.zip --clobber
 
   build-client-windows:
@@ -233,7 +236,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.create-release.outputs.tag }}
         run: |
-          Compress-Archive -Path dist\MagnetClient -DestinationPath MagnetClient-windows.zip
+          Move-Item -Path dist\MagnetClient -Destination MagnetClient
+          Compress-Archive -Path MagnetClient -DestinationPath MagnetClient-windows.zip
           gh release upload "$env:TAG" MagnetClient-windows.zip --clobber
 
   build-client-macos:
@@ -305,7 +309,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.create-release.outputs.tag }}
         run: |
-          zip -r MagnetClient-macos.zip MagnetClient.app
+          cd dist
+          zip -r ../MagnetClient-macos.zip MagnetClient.app
+          cd ..
           gh release upload "$TAG" MagnetClient-macos.zip --clobber
 
   publish-release:
