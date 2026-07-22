@@ -158,6 +158,12 @@ jobs:
 
           mkdir -p MagnetAgent.app
           cp -a macos/* MagnetAgent.app/ 2>/dev/null || true
+          # Ensure the macOS launcher keeps its executable bit through the
+          # artifact download / re-zip cycle.
+          if [ -f MagnetAgent.app/Contents/MacOS/MagnetAgent ]; then
+            chmod +x MagnetAgent.app/Contents/MacOS/MagnetAgent
+          fi
+          find MagnetAgent.app/Contents/MacOS -type f -exec chmod +x {} +
           zip -r MagnetAgent-macos.zip MagnetAgent.app
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
