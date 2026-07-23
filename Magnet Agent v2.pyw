@@ -20,7 +20,9 @@ VERSION = "v2.0.59"
 from PySide6.QtCore import (
     Qt, QTimer, QThread, QSettings, QPropertyAnimation, QEasingCurve, QUrl,
 )
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import (
+    QColor, QDesktopServices, QFont, QTextCursor, QTextBlockFormat, QTextCharFormat,
+)
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QMessageBox,
@@ -211,7 +213,7 @@ class MirroringSessionDetailView(SessionDetailView):
                 self._owner._append_chat_message("System", f"Failed to save dropped file: {e}", is_admin=False)
             return
         text = self._format_result(result_type, title, content)
-        self._owner._append_chat_message("System", text, is_admin=False)
+        # Keep command results in the dedicated command window, not the chat stream.
         self._owner._append_to_command_window(text)
 
     def add_screenshot(self, pixmap, title="Screenshot"):
@@ -459,23 +461,36 @@ class MagnetAgent(AgentWindow):
         if out is None:
             return
         if is_admin:
-            align = "right"
+            align = Qt.AlignmentFlag.AlignRight
             name_color = _css_color(self.theme.accent)
-        else:
-            align = "left"
+            text_color = _css_color(self.theme.text)
+        elif sender == "System":
+            align = Qt.AlignmentFlag.AlignLeft
             name_color = _css_color(self.theme.muted)
-        text_color = _css_color(self.theme.text)
-        safe_sender = html.escape(str(sender))
-        safe_text = html.escape(str(text)).replace("\n", "<br>")
-        html_block = (
-            f'<p align="{align}" style="margin: 4px 0;">'
-            f'<b style="color:{name_color};">{safe_sender}</b><br>'
-            f'<span style="color:{text_color};">{safe_text}</span>'
-            f'</p>'
-        )
-        cursor = out.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertHtml(html_block)
+            text_color = _css_color(self.theme.muted)
+        else:
+            align = Qt.AlignmentFlag.AlignLeft
+            name_color = _css_color(self.theme.muted)
+            text_color = _css_color(self.theme.text)
+
+        cursor = QTextCursor(out.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        block_format = QTextBlockFormat()
+        block_format.setAlignment(align)
+        block_format.setTopMargin(4)
+        block_format.setBottomMargin(4)
+        cursor.insertBlock(block_format)
+
+        name_fmt = QTextCharFormat()
+        name_fmt.setForeground(QColor(name_color))
+        name_fmt.setFontWeight(QFont.Weight.Bold)
+        cursor.insertText(f"{sender}\n", name_fmt)
+
+        text_fmt = QTextCharFormat()
+        text_fmt.setForeground(QColor(text_color))
+        cursor.insertText(str(text), text_fmt)
+
         out.setTextCursor(cursor)
         out.ensureCursorVisible()
 

@@ -72,7 +72,9 @@ class ChatBubble(QFrame):
         bubble.setWordWrap(True)
         bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         bubble.setStyleSheet(self._bubble_stylesheet(is_atlas))
+        bubble.setMinimumWidth(80)
         bubble.setMaximumWidth(260)
+        bubble.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.MinimumExpanding)
 
         align = Qt.AlignmentFlag.AlignLeft if is_atlas else Qt.AlignmentFlag.AlignRight
         layout.addWidget(sender, alignment=align)
@@ -216,7 +218,8 @@ class ChatWindow(QWidget):
             sender = sender_or_text
         bubble = ChatBubble(text, is_atlas, self.theme, self.messages)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
-        QTimer.singleShot(10, self._scroll_to_bottom)
+        self.messages.adjustSize()
+        QTimer.singleShot(50, self._scroll_to_bottom)
 
     def _scroll_to_bottom(self):
         vbar = self.scroll.verticalScrollBar()
