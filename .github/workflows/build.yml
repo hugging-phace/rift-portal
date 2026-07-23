@@ -54,6 +54,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
           python -m pip install -r requirements-agent.txt
+      - name: Set version constant
+        shell: pwsh
+        run: |
+          (Get-Content "Magnet Agent v2.pyw") -replace '^VERSION = .*', 'VERSION = "v2.0.${{ github.run_number }}"' | Set-Content "Magnet Agent v2.pyw"
+          (Get-Content "Magnet Client v2.pyw") -replace '^VERSION = .*', 'VERSION = "v2.0.${{ github.run_number }}"' | Set-Content "Magnet Client v2.pyw"
       - name: Build Windows agent
         run: |
           pyinstaller --noconsole --name "MagnetAgent" `
@@ -120,6 +125,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
           python -m pip install -r requirements-agent.txt
+      - name: Set version constant
+        run: |
+          sed -i "s/^VERSION = .*/VERSION = \"v2.0.${{ github.run_number }}\"/" "Magnet Agent v2.pyw" "Magnet Client v2.pyw"
       - name: Build macOS agent
         run: |
           pyinstaller --windowed --name "MagnetAgent" \
@@ -191,6 +199,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
           python -m pip install -r requirements-client.txt
+      - name: Set version constant
+        shell: pwsh
+        run: |
+          (Get-Content "Magnet Agent v2.pyw") -replace '^VERSION = .*', 'VERSION = "v2.0.${{ github.run_number }}"' | Set-Content "Magnet Agent v2.pyw"
+          (Get-Content "Magnet Client v2.pyw") -replace '^VERSION = .*', 'VERSION = "v2.0.${{ github.run_number }}"' | Set-Content "Magnet Client v2.pyw"
       - name: Build Windows client
         run: |
           pyinstaller --noconsole --name "MagnetClient" `
@@ -256,6 +269,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller
           python -m pip install -r requirements-client.txt
+      - name: Set version constant
+        run: |
+          sed -i "s/^VERSION = .*/VERSION = \"v2.0.${{ github.run_number }}\"/" "Magnet Agent v2.pyw" "Magnet Client v2.pyw"
       - name: Build macOS client
         run: |
           pyinstaller --windowed --name "MagnetClient" \
