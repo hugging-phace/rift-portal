@@ -519,6 +519,13 @@ def make_capture_source() -> CaptureSource:
     except Exception:
         pass
 
+    # On macOS, PIL's ImageGrab can hang when called from a background thread,
+    # and it still requires screen-recording permission. Skip it and fall back
+    # to the dummy source so the stream stays alive (and obviously shows it is
+    # not capturing the real screen).
+    if platform.system() == "Darwin":
+        return DummyCaptureSource()
+
     try:
         src = PillowCaptureSource()
         img = src.capture()

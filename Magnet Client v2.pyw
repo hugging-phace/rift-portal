@@ -224,6 +224,7 @@ class ChatWindow(QWidget):
 # ------------------------------------------------------------------
 class DropWindow(QWidget):
     file_dropped = Signal(str)
+    closed = Signal()
 
     def __init__(self, theme: Theme, parent=None):
         super().__init__(
@@ -238,10 +239,10 @@ class DropWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAcceptDrops(True)
-        self.setFixedSize(420, 360)
+        self.setFixedSize(320, 260)
 
         self.container = QFrame(self)
-        self.container.setGeometry(8, 8, 404, 344)
+        self.container.setGeometry(8, 8, 304, 244)
         self.container.setStyleSheet(
             f"QFrame {{ background: {_css_color(theme.panel)}; border-radius: 18px; }}"
         )
@@ -266,7 +267,7 @@ class DropWindow(QWidget):
             f"border-radius: 12px; font-size: 16px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.error)}; color: white; }}"
         )
-        close_btn.clicked.connect(self.hide)
+        close_btn.clicked.connect(self.close)
         header.addWidget(close_btn)
         layout.addLayout(header)
 
@@ -293,7 +294,7 @@ class DropWindow(QWidget):
         done_btn = QPushButton("Done")
         done_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         done_btn.setObjectName("primary")
-        done_btn.clicked.connect(self.hide)
+        done_btn.clicked.connect(self.close)
         layout.addWidget(done_btn)
 
     def dragEnterEvent(self, event):
@@ -335,6 +336,7 @@ class DropWindow(QWidget):
 
     def closeEvent(self, event):
         event.ignore()
+        self.closed.emit()
         self.hide()
 
 
@@ -692,6 +694,74 @@ class Backend(legacy.ModernPortalWindow):
         self.muted = muted
 
     # ------------------------------------------------------------------
+    # Drop window helpers
+    # ------------------------------------------------------------------
+    def _show_drop(self):
+        if self._drop.isVisible():
+            return
+        self._owner._position_popout(self._drop)
+        self._drop.show()
+        self._drop.raise_()
+        self._drop.activateWindow()
+
+    def _hide_drop(self):
+        if not self._drop.isVisible():
+            return
+        self._drop.close()
+
+    def _on_drop_closed(self):
+        if self.orb._state == "feedme":
+            self.orb.set_state("idle" if not self.paused else "paused")
+            self._set_status("Drop mode ended" if not self.paused else "Paused")
+
+    def _execute_command(self, cmd):
+        """Intercept feedme/stop_feedme and vision commands to drive the v2 UI."""
+        cmd_type = cmd.get("type", "")
+
+        if cmd_type == "feedme":
+            result = super()._execute_command(cmd)
+            self._show_drop()
+            return result
+
+        if cmd_type == "stop_feedme":
+            result = super()._execute_command(cmd)
+            self._hide_drop()
+            return result
+
+        if cmd_type == "start_vision":
+            endpoint = cmd.get("endpoint", {})
+            host = endpoint.get("host", "127.0.0.1")
+            port = int(endpoint.get("port", 0))
+            if not host or not port:
+                return False, "No Vision endpoint provided"
+            try:
+                if getattr(self, "_vision_streamer", None):
+                    self._vision_streamer.stop_stream()
+                    self._vision_streamer = None
+                streamer = legacy.VisionStreamer(self)
+                streamer.state_changed.connect(self._on_vision_state_changed)
+                streamer.error.connect(self._on_vision_error)
+                streamer.start_stream(host, port, legacy.SESSION_ID)
+                self._vision_streamer = streamer
+                self.orb.set_state("vision")
+                return True, f"Vision stream started to {host}:{port}"
+            except Exception as e:
+                return False, f"Vision start failed: {e}"
+
+        if cmd_type == "stop_vision":
+            try:
+                if getattr(self, "_vision_streamer", None):
+                    self._vision_streamer.stop_stream()
+                    self._vision_streamer = None
+                if self.orb._state == "vision":
+                    self.orb.set_state("idle" if not self.paused else "paused")
+                return True, "Vision stream stopped"
+            except Exception as e:
+                return False, f"Vision stop failed: {e}"
+
+        return super()._execute_command(cmd)
+
+    # ------------------------------------------------------------------
     # Lifecycle overrides — no legacy dialogs, just clean v2 behavior
     # ------------------------------------------------------------------
     def _enter_dormant(self):
@@ -854,6 +924,7 @@ class ClientApp(QApplication):
         self.backend._set_status("Awaiting connection")
         self.chat.message_sent.connect(self.backend._send_user_message)
         self.drop.file_dropped.connect(self.backend._handle_dropped_file)
+        self.drop.closed.connect(self.backend._on_drop_closed)
 
         self._start_backend()
         QTimer.singleShot(300, self._show_flyout)

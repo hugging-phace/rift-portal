@@ -342,6 +342,7 @@ class MagnetAgent(AgentWindow):
         self._session_list.cleanup_stale.connect(self._cleanup_stale_sessions)
         self._session_list.refresh_requested.connect(self._refresh_sessions)
         self._session_list.purge_closed.connect(self._purge_closed_sessions)
+        self._session_list.session_deleted.connect(self._delete_session)
 
         self._session_detail.back_requested.connect(self._back_to_list)
         self._session_detail.command_sent.connect(self._on_command_sent)
@@ -469,8 +470,7 @@ class MagnetAgent(AgentWindow):
                             title_lbl.setText(s.name or "Session")
                 self._switch_view(5)
                 self._firebase_worker.watch_results(session_id)
-                if s.portal_connected:
-                    self._firebase_worker.watch_chat(session_id)
+                self._firebase_worker.watch_chat(session_id)
                 return
 
     def _apply_theme(self, name):
@@ -481,6 +481,19 @@ class MagnetAgent(AgentWindow):
         self.update()
         for child in self.findChildren(QWidget):
             child.update()
+
+    def _delete_session(self, session_id: str):
+        """Delete a single session from Firebase, regardless of stage."""
+        try:
+            _backend._firebase_delete(f"sessions/{session_id}")
+        except Exception as e:
+            _backend._log(f"Failed to delete session {session_id}: {e}")
+        if self._current_session and self._current_session.id == session_id:
+            self._firebase_worker.unwatch_results(session_id)
+            self._firebase_worker.unwatch_chat(session_id)
+            self._current_session = None
+            self._switch_view(0)
+        self._refresh_sessions()
 
     def _toggle_max_restore(self):
         if self.isMaximized():
@@ -546,7 +559,7 @@ def main():
     # Force the light pale-navy theme by default.
     theme = _make_agent_theme(False)
     apply_global_styles(app, theme)
-    glyph = GlyphRenderer(size=160)
+    glyph = GlyphRenderer(size=160, weight=0.7)
     glyph.set_state("idle")
 
     settings = QSettings()

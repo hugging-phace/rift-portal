@@ -2453,6 +2453,7 @@ class SessionCard(QFrame):
     """A clickable card representing a session in the list, with animated edge glow."""
 
     card_clicked = Signal(str)  # emits session id
+    delete_requested = Signal(str)  # emits session id
 
     STATE_COLORS = {
         "waiting":    ((140, 60, 220), (200, 120, 255)),  # border, glow
@@ -2522,6 +2523,24 @@ class SessionCard(QFrame):
         self._state_label.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;  letter-spacing: 1px;")
         self._state_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         info_layout.addWidget(self._state_label)
+
+        self._delete_btn = QPushButton("×")
+        self._delete_btn.setFixedSize(22, 22)
+        self._delete_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self._delete_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {PALETTE['muted']};
+                border-radius: 11px;
+            }}
+            QPushButton:hover {{
+                background: {PALETTE['error']};
+                color: white;
+            }}
+        """)
+        self._delete_btn.clicked.connect(lambda: self.delete_requested.emit(self._session_id))
+        info_layout.addWidget(self._delete_btn)
 
         main_layout.addWidget(info_row)
 
@@ -2735,6 +2754,7 @@ class SessionListView(QWidget):
     """Dashboard showing active and inactive sessions."""
 
     session_selected = Signal(str)
+    session_deleted = Signal(str)
     new_session_requested = Signal()
     cleanup_stale = Signal()
     refresh_requested = Signal()
@@ -2984,6 +3004,7 @@ class SessionListView(QWidget):
             if card is None:
                 card = SessionCard(s)
                 card.card_clicked.connect(self.session_selected.emit)
+                card.delete_requested.connect(self.session_deleted.emit)
                 layout.insertWidget(layout.count() - 1, card)
             else:
                 card.update_session(s)
@@ -5100,6 +5121,13 @@ class MagnetAgent(QWidget):
         if not has_active and not self._ambient_timer.isActive() and not self._ambient_opening:
             self._schedule_ambient_rift()
 
+        # Watch chat for every active session so chat messages are captured even
+        # before the portal handshake completes or when the session isn't currently
+        # open in the detail view.
+        for s in new_sessions:
+            if s.status == "active":
+                self._firebase_worker.watch_chat(s.id)
+
         # If the current session's portal_connected state changed, refresh the detail view
         if self._current_session:
             for s in new_sessions:
@@ -5110,8 +5138,6 @@ class MagnetAgent(QWidget):
                         if not self._current_session.portal_connected:
                             self._current_session.portal_connected = True
                             self._session_detail._on_portal_opened()
-                        # Also start watching chat if not already
-                        self._firebase_worker.watch_chat(s.id)
                     elif s.portal_connected != self._current_session.portal_connected:
                         self._current_session.portal_connected = s.portal_connected
                     break
