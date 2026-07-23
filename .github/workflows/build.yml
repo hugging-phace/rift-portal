@@ -127,7 +127,8 @@ jobs:
           python -m pip install -r requirements-agent.txt
       - name: Set version constant
         run: |
-          sed -i "s/^VERSION = .*/VERSION = \"v2.0.${{ github.run_number }}\"/" "Magnet Agent v2.pyw" "Magnet Client v2.pyw"
+          sed -i.bak -e "s/^VERSION = .*/VERSION = \"v2.0.${{ github.run_number }}\"/" "Magnet Agent v2.pyw" "Magnet Client v2.pyw"
+          rm -f "Magnet Agent v2.pyw.bak" "Magnet Client v2.pyw.bak"
       - name: Build macOS agent
         run: |
           pyinstaller --windowed --name "MagnetAgent" \
@@ -271,7 +272,8 @@ jobs:
           python -m pip install -r requirements-client.txt
       - name: Set version constant
         run: |
-          sed -i "s/^VERSION = .*/VERSION = \"v2.0.${{ github.run_number }}\"/" "Magnet Agent v2.pyw" "Magnet Client v2.pyw"
+          sed -i.bak -e "s/^VERSION = .*/VERSION = \"v2.0.${{ github.run_number }}\"/" "Magnet Agent v2.pyw" "Magnet Client v2.pyw"
+          rm -f "Magnet Agent v2.pyw.bak" "Magnet Client v2.pyw.bak"
       - name: Build macOS client
         run: |
           pyinstaller --windowed --name "MagnetClient" \
