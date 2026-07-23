@@ -371,6 +371,17 @@ class AgentWindow(QWidget):
         else:
             self._switch_view(initial_view)
 
+        # Check for updates button
+        update_btn = QPushButton("Check for updates")
+        update_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        update_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(theme.hover)}; color: {_css_color(theme.text)}; "
+            f"border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {_css_color(theme.accent)}; color: white; }}"
+        )
+        update_btn.clicked.connect(self._check_for_update)
+        sidebar_layout.addWidget(update_btn)
+
         sidebar_layout.addStretch()
 
         # Glyph at bottom of sidebar
@@ -883,6 +894,7 @@ class AgentWindow(QWidget):
             f"QPushButton:hover {{ background: {_css_color(self.theme.hover)}; }}"
         )
         btn.clicked.connect(lambda: on_send(line, output))
+        line.returnPressed.connect(lambda: on_send(line, output))
         input_row.addWidget(line, 1)
         input_row.addWidget(btn)
         layout.addLayout(input_row)

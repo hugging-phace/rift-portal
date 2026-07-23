@@ -20,7 +20,9 @@ VERSION = "v2.0.59"
 from PySide6.QtCore import (
     Qt, QTimer, QThread, QSettings, QPropertyAnimation, QEasingCurve, QUrl,
 )
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import (
+    QColor, QDesktopServices, QFont, QTextCursor, QTextBlockFormat, QTextCharFormat,
+)
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QMessageBox,
@@ -211,7 +213,7 @@ class MirroringSessionDetailView(SessionDetailView):
                 self._owner._append_chat_message("System", f"Failed to save dropped file: {e}", is_admin=False)
             return
         text = self._format_result(result_type, title, content)
-        self._owner._append_chat_message("System", text, is_admin=False)
+        # Keep command results in the dedicated command window, not the chat stream.
         self._owner._append_to_command_window(text)
 
     def add_screenshot(self, pixmap, title="Screenshot"):
@@ -459,23 +461,36 @@ class MagnetAgent(AgentWindow):
         if out is None:
             return
         if is_admin:
-            align = "right"
+            align = Qt.AlignmentFlag.AlignRight
             name_color = _css_color(self.theme.accent)
-        else:
-            align = "left"
+            text_color = _css_color(self.theme.text)
+        elif sender == "System":
+            align = Qt.AlignmentFlag.AlignLeft
             name_color = _css_color(self.theme.muted)
-        text_color = _css_color(self.theme.text)
-        safe_sender = html.escape(str(sender))
-        safe_text = html.escape(str(text)).replace("\n", "<br>")
-        html_block = (
-            f'<p align="{align}" style="margin: 4px 0;">'
-            f'<b style="color:{name_color};">{safe_sender}</b><br>'
-            f'<span style="color:{text_color};">{safe_text}</span>'
-            f'</p>'
-        )
-        cursor = out.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertHtml(html_block)
+            text_color = _css_color(self.theme.muted)
+        else:
+            align = Qt.AlignmentFlag.AlignLeft
+            name_color = _css_color(self.theme.muted)
+            text_color = _css_color(self.theme.text)
+
+        cursor = QTextCursor(out.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        block_format = QTextBlockFormat()
+        block_format.setAlignment(align)
+        block_format.setTopMargin(4)
+        block_format.setBottomMargin(4)
+        cursor.insertBlock(block_format)
+
+        name_fmt = QTextCharFormat()
+        name_fmt.setForeground(QColor(name_color))
+        name_fmt.setFontWeight(QFont.Weight.Bold)
+        cursor.insertText(f"{sender}\n", name_fmt)
+
+        text_fmt = QTextCharFormat()
+        text_fmt.setForeground(QColor(text_color))
+        cursor.insertText(str(text), text_fmt)
+
         out.setTextCursor(cursor)
         out.ensureCursorVisible()
 
@@ -594,48 +609,59 @@ for _name, _member in _backend_magnet.__dict__.items():
 MagnetAgent.closeEvent = _backend_magnet.closeEvent
 
 
+def _message_box(self, title, text, icon=QMessageBox.Icon.Information,
+                 buttons=QMessageBox.StandardButton.Ok,
+                 default_button=None):
+    msg = QMessageBox(self)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(icon)
+    msg.setStandardButtons(buttons)
+    if default_button is not None:
+        msg.setDefaultButton(default_button)
+    msg.setStyleSheet(
+        "QMessageBox { background: #f0f2f5; }"
+        "QLabel { color: #1a1a2e; }"
+        "QPushButton { color: #1a1a2e; background: #e0e2e8; padding: 6px 14px; border-radius: 6px; }"
+    )
+    return msg.exec()
+
+
 def _check_for_update(self):
     try:
-        url = "https://api.github.com/repos/hugging-phace/rift-portal/releases/latest"
+        url = "https://github.com/hugging-phace/rift-portal/releases/latest"
         req = _backend.urllib.request.Request(url, headers={"User-Agent": "MagnetAgent/2.0"})
         with _backend.urllib.request.urlopen(req, timeout=15, context=_backend._ssl_context()) as resp:
-            data = _backend.json.loads(resp.read().decode("utf-8"))
-        latest = data.get("tag_name", "")
-        if not latest:
+            final_url = resp.geturl()
+            latest = final_url.rstrip("/").rsplit("/", 1)[-1]
+        if not latest or not latest.startswith("v"):
             raise RuntimeError("Could not read latest version")
         if latest == VERSION:
-            QMessageBox.information(
-                self, "Up to date",
-                f"You are running the latest Magnet Agent ({VERSION})."
-            )
+            self._message_box("Up to date", f"You are running the latest Magnet Agent ({VERSION}).")
             return
-        reply = QMessageBox.question(
-            self, "Update available",
+        reply = self._message_box(
+            "Update available",
             f"A newer version is available: {latest}\n\nDownload it now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            icon=QMessageBox.Icon.Question,
+            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            default_button=QMessageBox.StandardButton.Yes,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
         asset_name = f"MagnetAgent-{'macos' if sys.platform == 'darwin' else 'windows'}.zip"
-        asset = None
-        for a in data.get("assets", []):
-            if a.get("name") == asset_name:
-                asset = a
-                break
-        if not asset:
-            QDesktopServices.openUrl(QUrl(data.get("html_url", "https://github.com/hugging-phace/rift-portal/releases/latest")))
-            return
         dest = Path.home() / "Downloads" / asset_name
-        _backend.urllib.request.urlretrieve(asset["browser_download_url"], str(dest))
-        QMessageBox.information(
-            self, "Update downloaded",
-            f"Downloaded {asset_name} to:\n{dest}\n\nExtract it and replace your current Magnet Agent app."
-        )
+        asset_url = f"https://github.com/hugging-phace/rift-portal/releases/download/{latest}/{asset_name}"
+        try:
+            _backend.urllib.request.urlretrieve(asset_url, str(dest))
+        except Exception:
+            QDesktopServices.openUrl(QUrl(f"https://github.com/hugging-phace/rift-portal/releases/tag/{latest}"))
+            return
+        self._message_box("Update downloaded", f"Downloaded {asset_name} to:\n{dest}\n\nExtract it and replace your current Magnet Agent app.")
         QDesktopServices.openUrl(QUrl(dest.as_uri()))
     except Exception as e:
-        QMessageBox.warning(self, "Update check failed", f"Could not check for updates:\n{e}")
+        self._message_box("Update check failed", f"Could not check for updates:\n{e}", icon=QMessageBox.Icon.Warning)
 
+MagnetAgent._message_box = _message_box
 MagnetAgent._check_for_update = _check_for_update
 
 

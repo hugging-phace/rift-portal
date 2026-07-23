@@ -72,7 +72,9 @@ class ChatBubble(QFrame):
         bubble.setWordWrap(True)
         bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         bubble.setStyleSheet(self._bubble_stylesheet(is_atlas))
+        bubble.setMinimumWidth(80)
         bubble.setMaximumWidth(260)
+        bubble.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.MinimumExpanding)
 
         align = Qt.AlignmentFlag.AlignLeft if is_atlas else Qt.AlignmentFlag.AlignRight
         layout.addWidget(sender, alignment=align)
@@ -216,7 +218,8 @@ class ChatWindow(QWidget):
             sender = sender_or_text
         bubble = ChatBubble(text, is_atlas, self.theme, self.messages)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
-        QTimer.singleShot(10, self._scroll_to_bottom)
+        self.messages.adjustSize()
+        QTimer.singleShot(50, self._scroll_to_bottom)
 
     def _scroll_to_bottom(self):
         vbar = self.scroll.verticalScrollBar()
@@ -1072,12 +1075,12 @@ class ClientApp(QApplication):
         self.flyout.set_status(state)
 
     def _do_quit(self):
-        reply = QMessageBox.question(
-            self.flyout,
+        reply = self._message_box(
             "Quit Magnet Client",
             "Are you sure you want to quit?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            icon=QMessageBox.Icon.Question,
+            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            default_button=QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -1155,48 +1158,58 @@ class ClientApp(QApplication):
 
         threading.Thread(target=_backend_init, daemon=True).start()
 
+    def _message_box(self, title, text, icon=QMessageBox.Icon.Information,
+                     buttons=QMessageBox.StandardButton.Ok,
+                     default_button=None):
+        parent = self.flyout if self.flyout.isVisible() else None
+        msg = QMessageBox(parent)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(icon)
+        msg.setStandardButtons(buttons)
+        if default_button is not None:
+            msg.setDefaultButton(default_button)
+        msg.setStyleSheet(
+            "QMessageBox { background: #f0f2f5; }"
+            "QLabel { color: #1a1a2e; }"
+            "QPushButton { color: #1a1a2e; background: #e0e2e8; padding: 6px 14px; border-radius: 6px; }"
+        )
+        return msg.exec()
+
     def _check_for_update(self):
         self.flyout.hide()
         try:
-            url = "https://api.github.com/repos/hugging-phace/rift-portal/releases/latest"
+            url = "https://github.com/hugging-phace/rift-portal/releases/latest"
             req = legacy.urllib.request.Request(url, headers={"User-Agent": "MagnetClient/2.0"})
             with legacy.urllib.request.urlopen(req, timeout=15, context=legacy._ssl_context()) as resp:
-                data = legacy.json.loads(resp.read().decode("utf-8"))
-            latest = data.get("tag_name", "")
-            if not latest:
+                final_url = resp.geturl()
+                latest = final_url.rstrip("/").rsplit("/", 1)[-1]
+            if not latest or not latest.startswith("v"):
                 raise RuntimeError("Could not read latest version")
             if latest == VERSION:
-                QMessageBox.information(
-                    None, "Up to date",
-                    f"You are running the latest Magnet Client ({VERSION})."
-                )
+                self._message_box("Up to date", f"You are running the latest Magnet Client ({VERSION}).")
                 return
-            reply = QMessageBox.question(
-                None, "Update available",
+            reply = self._message_box(
+                "Update available",
                 f"A newer version is available: {latest}\n\nDownload it now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
+                icon=QMessageBox.Icon.Question,
+                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                default_button=QMessageBox.StandardButton.Yes,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
             asset_name = f"MagnetClient-{'macos' if sys.platform == 'darwin' else 'windows'}.zip"
-            asset = None
-            for a in data.get("assets", []):
-                if a.get("name") == asset_name:
-                    asset = a
-                    break
-            if not asset:
-                QDesktopServices.openUrl(QUrl(data.get("html_url", "https://github.com/hugging-phace/rift-portal/releases/latest")))
-                return
             dest = Path.home() / "Downloads" / asset_name
-            legacy.urllib.request.urlretrieve(asset["browser_download_url"], str(dest))
-            QMessageBox.information(
-                None, "Update downloaded",
-                f"Downloaded {asset_name} to:\n{dest}\n\nExtract it and replace your current Magnet Client app."
-            )
+            asset_url = f"https://github.com/hugging-phace/rift-portal/releases/download/{latest}/{asset_name}"
+            try:
+                legacy.urllib.request.urlretrieve(asset_url, str(dest))
+            except Exception:
+                QDesktopServices.openUrl(QUrl(f"https://github.com/hugging-phace/rift-portal/releases/tag/{latest}"))
+                return
+            self._message_box("Update downloaded", f"Downloaded {asset_name} to:\n{dest}\n\nExtract it and replace your current Magnet Client app.")
             QDesktopServices.openUrl(QUrl(dest.as_uri()))
         except Exception as e:
-            QMessageBox.warning(None, "Update check failed", f"Could not check for updates:\n{e}")
+            self._message_box("Update check failed", f"Could not check for updates:\n{e}", icon=QMessageBox.Icon.Warning)
 
 
 def main():

@@ -3583,7 +3583,16 @@ class SessionDetailView(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         bl.addWidget(sender)
         bl.addWidget(msg)
-        self._chat_layout.insertWidget(self._chat_layout.count() - 1, bubble)
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background: transparent;")
+        wl = QHBoxLayout(wrapper)
+        wl.setContentsMargins(0, 0, 0, 0)
+        if is_admin:
+            wl.addStretch()
+        wl.addWidget(bubble)
+        if not is_admin:
+            wl.addStretch()
+        self._chat_layout.insertWidget(self._chat_layout.count() - 1, wrapper)
         QTimer.singleShot(10, lambda: self._chat_scroll.verticalScrollBar().setValue(
             self._chat_scroll.verticalScrollBar().maximum()))
 
@@ -5217,11 +5226,19 @@ class MagnetAgent(QWidget):
 
     def _on_chat_sent(self, session_id, text):
         """Send a chat message to the portal via Firebase."""
-        if send_chat_to_session(session_id, text, sender="You") is None:
+        msg_id = send_chat_to_session(session_id, text, sender="You")
+        if msg_id is None:
             # Surface delivery failure so it isn't silently swallowed
             if self._current_session and self._current_session.id == session_id:
                 self._session_detail._add_chat_bubble(
                     "⚠ Message failed to send (Firebase unreachable)", is_admin=True, sender="You")
+            return
+        # Mark the outgoing message as seen so the Firebase listener does not
+        # echo it back into the chat panel.
+        for s in self._sessions:
+            if s.id == session_id:
+                s._seen_chat_ids.add(msg_id)
+                break
 
     def _switch_view(self, index):
         if self._stack.currentIndex() == index:
