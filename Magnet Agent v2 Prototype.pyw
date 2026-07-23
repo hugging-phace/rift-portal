@@ -894,6 +894,7 @@ class AgentWindow(QWidget):
             f"QPushButton:hover {{ background: {_css_color(self.theme.hover)}; }}"
         )
         btn.clicked.connect(lambda: on_send(line, output))
+        line.returnPressed.connect(lambda: on_send(line, output))
         input_row.addWidget(line, 1)
         input_row.addWidget(btn)
         layout.addLayout(input_row)
