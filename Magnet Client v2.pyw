@@ -24,8 +24,10 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject
-from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor, QPixmap
+VERSION = "v2.0.59"
+
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject, QUrl
+from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QWidget, QSystemTrayIcon, QMenu,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
@@ -95,6 +97,7 @@ class ChatBubble(QFrame):
 # ------------------------------------------------------------------
 class ChatWindow(QWidget):
     message_sent = Signal(str)
+    closed = Signal()
 
     def __init__(self, theme: Theme, parent=None):
         super().__init__(
@@ -141,7 +144,7 @@ class ChatWindow(QWidget):
             f"border-radius: 12px; font-size: 16px; }}"
             f"QPushButton:hover {{ background: {_css_color(theme.error)}; color: white; }}"
         )
-        close_btn.clicked.connect(self.hide)
+        close_btn.clicked.connect(self.close)
         hlay.addWidget(close_btn)
         layout.addWidget(header)
 
@@ -188,9 +191,14 @@ class ChatWindow(QWidget):
             f"border: none; font-size: 12px; }}"
             f"QPushButton:hover {{ color: {_css_color(self.theme.text)}; }}"
         )
-        close_chat_btn.clicked.connect(self.hide)
+        close_chat_btn.clicked.connect(self.close)
         close_row.addWidget(close_chat_btn)
         layout.addLayout(close_row)
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.closed.emit()
+        self.hide()
 
     def _send(self):
         text = self.input.text().strip()
@@ -348,6 +356,7 @@ class FlyoutPanel(QWidget):
     drop_requested = Signal()
     viewing_requested = Signal()
     pause_requested = Signal()
+    update_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, theme: Theme, parent=None):
@@ -432,6 +441,7 @@ class FlyoutPanel(QWidget):
             ("Send Files", self._open_drop),
             ("Share Screen", self._toggle_viewing),
             ("Pause", self._toggle_pause),
+            ("Check for Updates", self._check_for_update),
             ("Quit", self._quit),
         ]
         for label, cb in actions:
@@ -528,6 +538,9 @@ class FlyoutPanel(QWidget):
 
     def _toggle_pause(self):
         self._emit("pause_requested")
+
+    def _check_for_update(self):
+        self._emit("update_requested")
 
     def _quit(self):
         self._emit("quit_requested")
@@ -674,15 +687,20 @@ class Backend(legacy.ModernPortalWindow):
         self.status_changed.emit(text)
 
     def _show_chat(self):
-        self.chat_visible = True
-        self._owner._position_popout(self.chat)
+        if not self.chat.isVisible():
+            self._owner._position_popout(self.chat)
         self.chat.show()
         self.chat.raise_()
         self.chat.activateWindow()
+        self.chat_visible = True
 
     def _hide_chat(self):
         self.chat_visible = False
         self.chat.hide()
+
+    def _receive_atlas_message(self, text, speak=False):
+        super()._receive_atlas_message(text, speak)
+        self._show_chat()
 
     def _set_always_on_top(self, always_on_top):
         pass
@@ -902,6 +920,7 @@ class ClientApp(QApplication):
         self.flyout.drop_requested.connect(self._open_drop)
         self.flyout.viewing_requested.connect(self._toggle_viewing)
         self.flyout.pause_requested.connect(self._toggle_pause)
+        self.flyout.update_requested.connect(self._check_for_update)
         self.flyout.quit_requested.connect(self._do_quit)
 
         self.chat = ChatWindow(self.theme)
@@ -923,6 +942,7 @@ class ClientApp(QApplication):
         self.backend.status_changed.connect(self.flyout.set_status_text)
         self.backend._set_status("Awaiting connection")
         self.chat.message_sent.connect(self.backend._send_user_message)
+        self.chat.closed.connect(self.backend._hide_chat)
         self.drop.file_dropped.connect(self.backend._handle_dropped_file)
         self.drop.closed.connect(self.backend._on_drop_closed)
 
@@ -1020,6 +1040,7 @@ class ClientApp(QApplication):
         self._position_popout(self.chat)
         self.chat.show()
         self.chat.raise_()
+        self.backend.chat_visible = True
 
     def _on_chat_sent(self, text: str):
         self.flyout.set_status("processing")
@@ -1133,6 +1154,49 @@ class ClientApp(QApplication):
                 time.sleep(30)
 
         threading.Thread(target=_backend_init, daemon=True).start()
+
+    def _check_for_update(self):
+        self.flyout.hide()
+        try:
+            url = "https://api.github.com/repos/hugging-phace/rift-portal/releases/latest"
+            req = legacy.urllib.request.Request(url, headers={"User-Agent": "MagnetClient/2.0"})
+            with legacy.urllib.request.urlopen(req, timeout=15, context=legacy._ssl_context()) as resp:
+                data = legacy.json.loads(resp.read().decode("utf-8"))
+            latest = data.get("tag_name", "")
+            if not latest:
+                raise RuntimeError("Could not read latest version")
+            if latest == VERSION:
+                QMessageBox.information(
+                    None, "Up to date",
+                    f"You are running the latest Magnet Client ({VERSION})."
+                )
+                return
+            reply = QMessageBox.question(
+                None, "Update available",
+                f"A newer version is available: {latest}\n\nDownload it now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            asset_name = f"MagnetClient-{'macos' if sys.platform == 'darwin' else 'windows'}.zip"
+            asset = None
+            for a in data.get("assets", []):
+                if a.get("name") == asset_name:
+                    asset = a
+                    break
+            if not asset:
+                QDesktopServices.openUrl(QUrl(data.get("html_url", "https://github.com/hugging-phace/rift-portal/releases/latest")))
+                return
+            dest = Path.home() / "Downloads" / asset_name
+            legacy.urllib.request.urlretrieve(asset["browser_download_url"], str(dest))
+            QMessageBox.information(
+                None, "Update downloaded",
+                f"Downloaded {asset_name} to:\n{dest}\n\nExtract it and replace your current Magnet Client app."
+            )
+            QDesktopServices.openUrl(QUrl(dest.as_uri()))
+        except Exception as e:
+            QMessageBox.warning(None, "Update check failed", f"Could not check for updates:\n{e}")
 
 
 def main():

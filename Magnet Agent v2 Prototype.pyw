@@ -615,6 +615,23 @@ class AgentWindow(QWidget):
             oauth_card.add_row(btn)
 
         page._body.addWidget(oauth_card)
+
+        update_card = FormCard("Updates", self.theme, page)
+        update_note = QLabel(f"Current version: {getattr(self, 'VERSION', 'unknown')}")
+        update_note.setWordWrap(True)
+        update_note.setStyleSheet(f"color: {_css_color(t.muted)}; font-size: 12px;")
+        update_card.add_row(update_note)
+        update_btn = QPushButton("Check for updates")
+        update_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        update_btn.setStyleSheet(
+            f"QPushButton {{ background: {_css_color(t.accent)}; color: white;  "
+            f"border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {_css_color(t.hover)}; }}"
+        )
+        update_btn.clicked.connect(self._check_for_update)
+        update_card.add_row(update_btn)
+        page._body.addWidget(update_card)
+
         page._body.addStretch(1)
         return page
 

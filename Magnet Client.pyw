@@ -2637,7 +2637,7 @@ class ModernPortalWindow(QWidget):
                 f"sessions/{SESSION_ID}/chat/{msg_id}",
                 {
                     "id": msg_id,
-                    "sender": "portal",
+                    "sender": f"{user}@{host}",
                     "text": text,
                     "timestamp": datetime.now().isoformat(),
                 },

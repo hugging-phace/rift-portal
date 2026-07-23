@@ -12,12 +12,15 @@ import importlib.util
 import os
 import sys
 import time
+import html
 from pathlib import Path
 
+VERSION = "v2.0.59"
+
 from PySide6.QtCore import (
-    Qt, QTimer, QThread, QSettings, QPropertyAnimation, QEasingCurve,
+    Qt, QTimer, QThread, QSettings, QPropertyAnimation, QEasingCurve, QUrl,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QMessageBox,
@@ -194,8 +197,21 @@ class MirroringSessionDetailView(SessionDetailView):
         return f"{title}\n{content}"
 
     def add_result(self, result_type, title, content):
+        if result_type == "file_drop" and isinstance(content, dict):
+            try:
+                file_path = content.get("file", "")
+                b64_data = content.get("data", "")
+                file_name = Path(file_path).name or "dropped-file"
+                dest = self._owner._file_manager.feed_path / file_name
+                dest.write_bytes(_backend._b64.b64decode(b64_data))
+                if self._owner._file_manager.current_path == self._owner._file_manager.feed_path:
+                    self._owner._file_manager._load_path(self._owner._file_manager.feed_path)
+                self._owner._append_chat_message("System", f"File saved to Incoming: {file_name}", is_admin=False)
+            except Exception as e:
+                self._owner._append_chat_message("System", f"Failed to save dropped file: {e}", is_admin=False)
+            return
         text = self._format_result(result_type, title, content)
-        self._owner._append_to_chat(text)
+        self._owner._append_chat_message("System", text, is_admin=False)
         self._owner._append_to_command_window(text)
 
     def add_screenshot(self, pixmap, title="Screenshot"):
@@ -204,12 +220,17 @@ class MirroringSessionDetailView(SessionDetailView):
             dialog.show()
         except Exception:
             pass
-        self._owner._append_to_chat(f"Screenshot received: {title}")
+        self._owner._append_chat_message("System", f"Screenshot received: {title}", is_admin=False)
 
-    def _add_chat_bubble(self, text, is_admin=False):
-        super()._add_chat_bubble(text, is_admin)
-        prefix = "You:" if is_admin else "Atlas:"
-        self._owner._append_to_chat(f"{prefix} {text}")
+    def _add_chat_bubble(self, text, is_admin=False, sender=None):
+        sender = sender or ("You" if is_admin else (self._session.name if self._session else "Atlas"))
+        super()._add_chat_bubble(text, is_admin, sender)
+        self._owner._append_chat_message(sender, text, is_admin)
+
+    def set_session(self, session):
+        if getattr(self._owner, "_chat_output", None) is not None:
+            self._owner._chat_output.clear()
+        super().set_session(session)
 
     def set_vision_frame(self, pixmap):
         super().set_vision_frame(pixmap)
@@ -364,7 +385,7 @@ class MagnetAgent(AgentWindow):
         line.clear()
         if not text or not self._current_session:
             return
-        output.append(f"You: {text}")
+        self._append_chat_message("You", text, is_admin=True)
         self._on_chat_sent(self._current_session.id, text)
 
     def _on_quick_action(self, *args):
@@ -432,6 +453,31 @@ class MagnetAgent(AgentWindow):
     def _append_to_chat(self, text):
         if getattr(self, "_chat_output", None) is not None:
             self._chat_output.append(text)
+
+    def _append_chat_message(self, sender, text, is_admin=False):
+        out = getattr(self, "_chat_output", None)
+        if out is None:
+            return
+        if is_admin:
+            align = "right"
+            name_color = _css_color(self.theme.accent)
+        else:
+            align = "left"
+            name_color = _css_color(self.theme.muted)
+        text_color = _css_color(self.theme.text)
+        safe_sender = html.escape(str(sender))
+        safe_text = html.escape(str(text)).replace("\n", "<br>")
+        html_block = (
+            f'<p align="{align}" style="margin: 4px 0;">'
+            f'<b style="color:{name_color};">{safe_sender}</b><br>'
+            f'<span style="color:{text_color};">{safe_text}</span>'
+            f'</p>'
+        )
+        cursor = out.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertHtml(html_block)
+        out.setTextCursor(cursor)
+        out.ensureCursorVisible()
 
     def _append_to_command_window(self, text):
         try:
@@ -546,6 +592,51 @@ for _name, _member in _backend_magnet.__dict__.items():
 
 # Ensure we use the production closeEvent for clean thread shutdown.
 MagnetAgent.closeEvent = _backend_magnet.closeEvent
+
+
+def _check_for_update(self):
+    try:
+        url = "https://api.github.com/repos/hugging-phace/rift-portal/releases/latest"
+        req = _backend.urllib.request.Request(url, headers={"User-Agent": "MagnetAgent/2.0"})
+        with _backend.urllib.request.urlopen(req, timeout=15, context=_backend._ssl_context()) as resp:
+            data = _backend.json.loads(resp.read().decode("utf-8"))
+        latest = data.get("tag_name", "")
+        if not latest:
+            raise RuntimeError("Could not read latest version")
+        if latest == VERSION:
+            QMessageBox.information(
+                self, "Up to date",
+                f"You are running the latest Magnet Agent ({VERSION})."
+            )
+            return
+        reply = QMessageBox.question(
+            self, "Update available",
+            f"A newer version is available: {latest}\n\nDownload it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        asset_name = f"MagnetAgent-{'macos' if sys.platform == 'darwin' else 'windows'}.zip"
+        asset = None
+        for a in data.get("assets", []):
+            if a.get("name") == asset_name:
+                asset = a
+                break
+        if not asset:
+            QDesktopServices.openUrl(QUrl(data.get("html_url", "https://github.com/hugging-phace/rift-portal/releases/latest")))
+            return
+        dest = Path.home() / "Downloads" / asset_name
+        _backend.urllib.request.urlretrieve(asset["browser_download_url"], str(dest))
+        QMessageBox.information(
+            self, "Update downloaded",
+            f"Downloaded {asset_name} to:\n{dest}\n\nExtract it and replace your current Magnet Agent app."
+        )
+        QDesktopServices.openUrl(QUrl(dest.as_uri()))
+    except Exception as e:
+        QMessageBox.warning(self, "Update check failed", f"Could not check for updates:\n{e}")
+
+MagnetAgent._check_for_update = _check_for_update
 
 
 # ------------------------------------------------------------------

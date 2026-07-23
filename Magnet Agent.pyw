@@ -2489,7 +2489,6 @@ class SessionCard(QFrame):
         main_layout.setSpacing(0)
 
         info_row = QWidget(self)
-        info_row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         info_row.setFixedHeight(64)
         info_layout = QHBoxLayout(info_row)
         info_layout.setContentsMargins(14, 8, 14, 8)
@@ -2524,15 +2523,16 @@ class SessionCard(QFrame):
         self._state_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         info_layout.addWidget(self._state_label)
 
-        self._delete_btn = QPushButton("×")
-        self._delete_btn.setFixedSize(22, 22)
-        self._delete_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setFixedSize(54, 22)
+        self._delete_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         self._delete_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._delete_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 color: {PALETTE['muted']};
                 border-radius: 11px;
+                padding: 0;
             }}
             QPushButton:hover {{
                 background: {PALETTE['error']};
@@ -3494,8 +3494,8 @@ class SessionDetailView(QWidget):
         text = self._chat_input.text().strip()
         if text and self._session:
             self._chat_input.clear()
-            self._add_chat_bubble(text, is_admin=True)
-            self._session.chat.append(("admin", text, datetime.now()))
+            self._add_chat_bubble(text, is_admin=True, sender="You")
+            self._session.chat.append(("You", text, datetime.now()))
             self.chat_sent.emit(self._session.id, text)
 
     def _quick(self, action):
@@ -3551,17 +3551,17 @@ class SessionDetailView(QWidget):
         QTimer.singleShot(10, lambda: self._results_scroll.verticalScrollBar().setValue(
             self._results_scroll.verticalScrollBar().maximum()))
 
-    def _add_chat_bubble(self, text, is_admin=False):
+    def _add_chat_bubble(self, text, is_admin=False, sender=None):
         bubble = QFrame()
         bubble.setMaximumWidth(280)
         if is_admin:
             bg = PALETTE["bubble_user"]
             color = PALETTE["accent_bright"]
-            sender_text = "ADMIN"
+            sender_text = sender or "ADMIN"
         else:
             bg = PALETTE["bubble_atlas"]
             color = PALETTE["text"]
-            sender_text = "PORTAL"
+            sender_text = sender or "PORTAL"
         bubble.setStyleSheet(f"""
             QFrame {{
                 background: {bg};
@@ -3594,7 +3594,9 @@ class SessionDetailView(QWidget):
                 item.widget().deleteLater()
         if self._session:
             for sender, text, ts in self._session.chat:
-                self._add_chat_bubble(text, is_admin=(sender == "admin"))
+                is_admin = sender in ("You", "admin", "Atlas")
+                display_sender = "You" if is_admin else (sender or (self._session.name if self._session else "Client"))
+                self._add_chat_bubble(text, is_admin=is_admin, sender=display_sender)
 
     def _refresh_results(self):
         while self._results_layout.count() > 1:
@@ -5215,11 +5217,11 @@ class MagnetAgent(QWidget):
 
     def _on_chat_sent(self, session_id, text):
         """Send a chat message to the portal via Firebase."""
-        if send_chat_to_session(session_id, text, sender="admin") is None:
+        if send_chat_to_session(session_id, text, sender="You") is None:
             # Surface delivery failure so it isn't silently swallowed
             if self._current_session and self._current_session.id == session_id:
                 self._session_detail._add_chat_bubble(
-                    "⚠ Message failed to send (Firebase unreachable)", is_admin=False)
+                    "⚠ Message failed to send (Firebase unreachable)", is_admin=True, sender="You")
 
     def _switch_view(self, index):
         if self._stack.currentIndex() == index:
@@ -5677,7 +5679,7 @@ class MagnetAgent(QWidget):
     def _on_chat_received(self, session_id, msg):
         """Incoming chat message from the portal client."""
         text = msg.get("text", "")
-        sender = msg.get("sender", "portal")
+        sender = msg.get("sender", "")
         msg_type = msg.get("type", "")
         msg_id = msg.get("id", "")
         if not text:
@@ -5690,11 +5692,15 @@ class MagnetAgent(QWidget):
                     break
                 if msg_id:
                     s._seen_chat_ids.add(msg_id)
+                # Show the client's session/computer name instead of the generic
+                # "portal" sender key.
+                if not sender or sender in ("portal", "client"):
+                    sender = s.name or s.host or "Client"
                 s.chat.append((sender, text, datetime.now()))
                 # Fast pink flash on every incoming message
                 self.orb.flash_alert()
                 if self._current_session and self._current_session.id == session_id:
-                    self._session_detail._add_chat_bubble(text, is_admin=False)
+                    self._session_detail._add_chat_bubble(text, is_admin=False, sender=sender)
                 break
 
     def _update_orb_state(self, state):
