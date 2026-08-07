@@ -1140,6 +1140,8 @@ class FirebaseWorker(_QObj):
                 "name": f"{info.get('user', 'unknown')}@{info.get('host', 'unknown')}",
                 "user": info.get("user", "unknown"),
                 "host": info.get("host", "unknown"),
+                "folder": info.get("folder", ""),
+                "system_info": info.get("system_info", {}),
                 "status": session_status,
                 "portal_connected": card_state == "connected",
                 "orb_state": "idle",
@@ -1776,6 +1778,8 @@ class Session:
         self.opened_at = ""
         self.last_seen = ""
         self.card_state = "inactive"
+        self.folder = ""
+        self.system_info = {}
 
     def uptime_str(self):
         delta = datetime.now() - self.created
@@ -5100,6 +5104,8 @@ class MagnetAgent(QWidget):
                 existing.name = fs["name"]
                 existing.user = fs["user"]
                 existing.host = fs["host"]
+                existing.folder = fs.get("folder", "")
+                existing.system_info = fs.get("system_info", {})
                 existing.opened_at = fs.get("opened_at", "")
                 existing.last_seen = fs.get("last_seen", "")
                 existing.card_state = fs.get("card_state", "inactive")
@@ -5109,6 +5115,8 @@ class MagnetAgent(QWidget):
                 s.id = fs["id"]
                 s.status = fs["status"]
                 s.portal_connected = fs["portal_connected"]
+                s.folder = fs.get("folder", "")
+                s.system_info = fs.get("system_info", {})
                 s.opened_at = fs.get("opened_at", "")
                 s.last_seen = fs.get("last_seen", "")
                 s.card_state = fs.get("card_state", "inactive")

@@ -396,7 +396,9 @@ class MagnetAgent(AgentWindow):
         if len(args) == 1:
             action = args[0]
             if action == "Files":
-                self._open_file_manager()
+                # Refresh the embedded remote file manager for the active session.
+                self._configure_remote_file_manager(self._current_session)
+                self._send_remote_list(self._current_session.id, self._current_session.folder or "")
                 return
             if action == "Terminal":
                 self._open_terminal()
@@ -424,7 +426,7 @@ class MagnetAgent(AgentWindow):
         if lower.startswith(".xnavigate") or lower == ".navigate":
             path = cmd[10:].strip() if lower.startswith(".xnavigate") else cmd[8:].strip()
             path = path or "~"
-            self._file_manager._load_path(Path(os.path.expanduser(path)))
+            self._file_manager._load_path(path)
             return f"Opened folder view: {path}"
         if lower.startswith(".xterminal") or lower == ".terminal":
             self._open_terminal()
@@ -529,10 +531,92 @@ class MagnetAgent(AgentWindow):
                         title_lbl = layout.itemAt(0).widget()
                         if isinstance(title_lbl, QLabel):
                             title_lbl.setText(s.name or "Session")
+                # Point the file manager and system info bar at the remote session.
+                self._update_system_info_labels(s)
+                self._configure_remote_file_manager(s)
+                # Ask the client for fresh system info while using the registration snapshot.
+                self._send_remote_info(s.id)
                 self._switch_view(5)
                 self._firebase_worker.watch_results(session_id)
                 self._firebase_worker.watch_chat(session_id)
                 return
+
+    def _update_system_info_labels(self, session):
+        """Update the active-session info bar from a session object."""
+        if not getattr(self, "_info_labels", None):
+            return
+        info = getattr(session, "system_info", {}) or {}
+        for key in ("OS", "RAM", "Disk"):
+            lbl = self._info_labels.get(key)
+            if lbl:
+                lbl.setText(str(info.get(key, "Unknown")))
+
+    def _configure_remote_file_manager(self, session):
+        """Point the embedded file manager at the selected remote session."""
+        fm = getattr(self, "_file_manager", None)
+        if fm is None:
+            return
+        root = getattr(session, "folder", "") or ""
+        os_name = (getattr(session, "system_info", {}) or {}).get("OS", "")
+        fm.set_remote(
+            session.id,
+            root,
+            lambda path, sid=session.id: self._send_remote_list(sid, path),
+            lambda path, sid=session.id: self._send_remote_fetch(sid, path),
+            lambda path, sid=session.id: self._send_remote_delete(sid, path),
+            os_name=os_name,
+        )
+
+    def _send_remote_list(self, session_id, path):
+        if not self._current_session or self._current_session.id != session_id:
+            return
+        _backend.send_command_to_session(session_id, "rift_command", command=f".list {path}")
+
+    def _send_remote_info(self, session_id):
+        if not self._current_session or self._current_session.id != session_id:
+            return
+        _backend.send_command_to_session(session_id, "rift_command", command=".info")
+
+    def _send_remote_fetch(self, session_id, path):
+        if not self._current_session or self._current_session.id != session_id:
+            return
+        _backend.send_command_to_session(session_id, "rift_command", command=f".fetch {path}")
+
+    def _send_remote_delete(self, session_id, path):
+        if not self._current_session or self._current_session.id != session_id:
+            return
+        _backend.send_command_to_session(session_id, "rift_command", command=f".delete {path}")
+
+    def _on_result_received(self, session_id, result):
+        """Handle command results from the remote client.
+
+        Routes .list and .info results to the v2 active-session UI; all other
+        results fall through to the backend SessionDetailView.
+        """
+        if not isinstance(result, dict):
+            _backend.MagnetAgent._on_result_received(self, session_id, result)
+            return
+        payload = result.get("result", "")
+        session = None
+        for s in self._sessions:
+            if s.id == session_id:
+                session = s
+                break
+        if session and isinstance(payload, dict):
+            if "entries" in payload:
+                # Structured directory listing from .list
+                if self._current_session and self._current_session.id == session_id:
+                    fm = getattr(self, "_file_manager", None)
+                    if fm:
+                        fm.receive_remote_list(payload.get("path", ""), payload.get("entries", []))
+                return
+            if any(k in payload for k in ("OS", "RAM", "Disk")):
+                # System info from .info
+                session.system_info = payload
+                if self._current_session and self._current_session.id == session_id:
+                    self._update_system_info_labels(session)
+                return
+        _backend.MagnetAgent._on_result_received(self, session_id, result)
 
     def _apply_theme(self, name):
         """Apply a backend theme update and refresh the settings view."""
@@ -573,6 +657,7 @@ _METHODS_TO_SKIP = {
     "_finish_switch_view",
     "_apply_theme",
     "_open_session",
+    "_on_result_received",
     "_toggle_max_restore",
     "_setup_backend",
     "_build_sessions_page",
