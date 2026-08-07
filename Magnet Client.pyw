@@ -50,7 +50,7 @@ from magnet_orb import OrbWidget
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
-PORTAL_VERSION = "2.1.0"
+PORTAL_VERSION = "2.1.1"
 # Set to True for grainy pointillist texture, False for smooth gradients.
 # Backup of the smooth version: "Python Portal for Atlas v2 BACKUP.pyw"
 GRAINY_RENDER = True
@@ -208,6 +208,63 @@ def _firebase_delete(path):
         return False
 
 
+def _get_ram_gb():
+    """Return total RAM as a human-readable string, best-effort cross-platform."""
+    try:
+        system = platform.system()
+        if system == "Linux":
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        parts = line.split()
+                        kb = int(parts[1])
+                        return f"{kb / (1024 * 1024):.1f} GB total"
+        elif system == "Darwin":
+            proc = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                bytes_total = int(proc.stdout.strip())
+                return f"{bytes_total / (1024 ** 3):.1f} GB total"
+        elif system == "Windows":
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return f"{stat.ullTotalPhys / (1024 ** 3):.1f} GB total"
+    except Exception:
+        pass
+    return "Unknown"
+
+
+def _get_system_info():
+    """Return a dict of OS, RAM, and Disk info for the current machine."""
+    info = {"OS": "Unknown", "RAM": "Unknown", "Disk": "Unknown"}
+    try:
+        info["OS"] = f"{platform.system()} {platform.release()} {platform.machine()}"
+    except Exception:
+        pass
+    try:
+        info["RAM"] = _get_ram_gb()
+    except Exception:
+        pass
+    try:
+        total, used, free = shutil.disk_usage(os.path.expanduser("~"))
+        info["Disk"] = f"{free // (2**30)} GB free / {total // (2**30)} GB total"
+    except Exception:
+        pass
+    return info
+
+
 def _register_session(user, host, folder):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     data = {
@@ -216,6 +273,7 @@ def _register_session(user, host, folder):
         "user": user,
         "host": host,
         "folder": folder,
+        "system_info": _get_system_info(),
         "status": "open",
         "opened_at": now,
         "last_seen": now,
@@ -2955,7 +3013,11 @@ class ModernPortalWindow(QWidget):
         """
         parts = rift_cmd.split(None, 1)
         cmd_name = parts[0].lower() if parts else ""
-        arg = parts[1].strip() if len(parts) > 1 else cmd.get("path", cmd.get("content", ""))
+        arg = rift_cmd[len(cmd_name):].strip() if parts else ""
+        if (arg.startswith('"') and arg.endswith('"')) or (arg.startswith("'") and arg.endswith("'")):
+            arg = arg[1:-1]
+        if not arg:
+            arg = cmd.get("path", cmd.get("content", ""))
 
         # Transient rift commands (.scan, .view, .terminal, etc.) flash the orb.
         # Toggle/mode commands (.pause, .feed, .pulse, .vision, .reset, .screenshot)
@@ -2978,6 +3040,39 @@ class ModernPortalWindow(QWidget):
                 return True, "Files:\n" + "\n".join(files[:200])
             except Exception as e:
                 return False, f"Scan failed: {e}"
+
+        # .list — structured directory listing for the remote file manager
+        if cmd_name == ".list":
+            if not arg:
+                path = Path(self.portal_folder)
+            else:
+                arg_path = Path(arg)
+                if arg_path.is_absolute():
+                    path = arg_path
+                else:
+                    path = Path(self.portal_folder) / arg
+            try:
+                if not path.exists():
+                    return False, f"Path does not exist: {path}"
+                entries = []
+                for entry in sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+                    try:
+                        st = entry.stat()
+                        entries.append({
+                            "name": entry.name,
+                            "is_dir": entry.is_dir(),
+                            "size": st.st_size if entry.is_file() else 0,
+                            "mtime": st.st_mtime,
+                        })
+                    except Exception:
+                        entries.append({"name": entry.name, "is_dir": entry.is_dir(), "size": 0, "mtime": 0})
+                return True, {"path": str(path), "entries": entries}
+            except Exception as e:
+                return False, f"List failed: {e}"
+
+        # .info — return remote system info
+        if cmd_name == ".info":
+            return True, _get_system_info()
 
         # .view — read a file's contents
         if cmd_name == ".view":

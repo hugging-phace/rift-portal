@@ -10,8 +10,10 @@ This file is intentionally self-contained and does not yet wire in the
 existing Magnet Agent backend.
 """
 
+import ntpath
 import os
 import platform
+import posixpath
 import secrets
 import shutil
 import smtplib
@@ -778,6 +780,7 @@ class AgentWindow(QWidget):
         info_layout = QHBoxLayout(info_bar)
         info_layout.setContentsMargins(12, 8, 12, 8)
         info_layout.setSpacing(16)
+        self._info_labels = {}
         for key, value in sys_info.items():
             col = QVBoxLayout()
             col.setSpacing(2)
@@ -788,6 +791,7 @@ class AgentWindow(QWidget):
             col.addWidget(lbl_key)
             col.addWidget(lbl_val)
             info_layout.addLayout(col)
+            self._info_labels[key] = lbl_val
         info_layout.addStretch()
         page._body.addWidget(info_bar)
 
@@ -1213,6 +1217,15 @@ class FileManagerWindow(QFrame):
         self.current_path = Path(os.path.expanduser(path))
         self._clipboard = None
 
+        # Remote file manager state (populated by the production agent backend).
+        self._remote = False
+        self._remote_session_id = None
+        self._remote_request_list = None
+        self._remote_request_fetch = None
+        self._remote_request_delete = None
+        self._remote_os = ""
+        self._remote_path_module = posixpath
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
@@ -1357,7 +1370,39 @@ class FileManagerWindow(QFrame):
                 item.setForeground(QColor(255, 255, 255, 120))
             self.locations.addItem(item)
 
+    def set_remote(self, session_id, root, request_list, request_fetch, request_delete, os_name=""):
+        """Switch this file manager into remote mode for a client session."""
+        self._remote = True
+        self._remote_session_id = session_id
+        self._remote_request_list = request_list
+        self._remote_request_fetch = request_fetch
+        self._remote_request_delete = request_delete
+        self._remote_os = os_name
+        self._remote_path_module = ntpath if "windows" in os_name.lower() else posixpath
+        self.locations.clear()
+        if root:
+            item = QListWidgetItem("Home")
+            item.setData(Qt.ItemDataRole.UserRole, root)
+            self.locations.addItem(item)
+        # If a root was provided, start there; otherwise let the agent request it.
+        if root:
+            self._load_path(root)
+
+    def _make_remote_path(self, path):
+        if isinstance(path, Path):
+            path = str(path)
+        return path
+
+    def _join_remote_path(self, *parts):
+        return self._remote_path_module.join(*parts)
+
+    def _remote_parent(self, path):
+        return self._remote_path_module.dirname(path)
+
     def _load_path(self, path):
+        if self._remote:
+            self._load_remote_path(path)
+            return
         if isinstance(path, str):
             path = Path(os.path.expanduser(path))
         self.current_path = path
@@ -1380,14 +1425,62 @@ class FileManagerWindow(QFrame):
         except Exception as e:
             self.status.setText(f"Unable to read path: {e}")
 
+    def _load_remote_path(self, path):
+        if not self._remote or not self._remote_request_list:
+            return
+        if path is None:
+            path = ""
+        path = self._make_remote_path(path)
+        if not path or path == "~":
+            path = ""
+        self.current_path = path
+        self.path_label.setText(path)
+        self.files.clear()
+        self.status.setText("Loading...")
+        try:
+            self._remote_request_list(path)
+        except Exception as e:
+            self.status.setText(f"Remote list failed: {e}")
+
+    def receive_remote_list(self, path, entries):
+        """Called by the agent backend when a .list result arrives."""
+        self.current_path = path
+        self.path_label.setText(path)
+        self.files.clear()
+        if not entries:
+            self.status.setText("Empty folder")
+            return
+        for entry in entries:
+            name = entry.get("name", "")
+            is_dir = entry.get("is_dir", False)
+            size = entry.get("size", 0)
+            mtime = entry.get("mtime", 0)
+            full_path = self._join_remote_path(path, name)
+            item = QTreeWidgetItem()
+            item.setText(0, f"{'📁' if is_dir else '📄'}  {name}")
+            item.setText(1, "--" if is_dir else self._human_size(size))
+            item.setText(2, self._fmt_time(mtime))
+            item.setData(0, Qt.ItemDataRole.UserRole, full_path)
+            self.files.addTopLevelItem(item)
+        self.status.setText(f"{len(entries)} items")
+
     def _location_clicked(self, item):
         path = item.data(Qt.ItemDataRole.UserRole)
         if path:
-            self._load_path(Path(path))
+            self._load_path(path)
 
     def _item_double_clicked(self, item):
         path_str = item.data(0, Qt.ItemDataRole.UserRole)
         if not path_str:
+            return
+        if self._remote:
+            # In remote mode, the list entries already tell us whether the row is a directory.
+            is_dir = str(item.text(0)).startswith("📁")
+            if is_dir:
+                self._load_path(path_str)
+            elif self._remote_request_fetch:
+                self._remote_request_fetch(path_str)
+                self.status.setText("Fetching file...")
             return
         p = Path(path_str)
         if p.is_dir():
@@ -1428,7 +1521,15 @@ class FileManagerWindow(QFrame):
         item = self.files.currentItem()
         if not item:
             return
-        src = Path(item.data(0, Qt.ItemDataRole.UserRole))
+        path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        if self._remote:
+            if self._remote_request_fetch:
+                self._remote_request_fetch(path_str)
+                self.status.setText("Fetching file...")
+            else:
+                self.status.setText("Remote fetch not available")
+            return
+        src = Path(path_str)
         if not src.is_file():
             self.status.setText("Select a file to download")
             return
@@ -1442,13 +1543,15 @@ class FileManagerWindow(QFrame):
                 self.status.setText(f"Download failed: {e}")
 
     def _ctx_copy(self):
+        if self._remote:
+            return
         item = self.files.currentItem()
         if item:
             self._clipboard = Path(item.data(0, Qt.ItemDataRole.UserRole))
             self.status.setText(f"Copied {self._clipboard.name} to clipboard")
 
     def _ctx_paste(self):
-        if not self._clipboard:
+        if self._remote or not self._clipboard:
             return
         try:
             import shutil
@@ -1466,7 +1569,19 @@ class FileManagerWindow(QFrame):
         item = self.files.currentItem()
         if not item:
             return
-        src = Path(item.data(0, Qt.ItemDataRole.UserRole))
+        path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        name = Path(path_str).name if not self._remote else path_str.split(self._remote_path_module.sep)[-1]
+        if self._remote:
+            if self._remote_request_delete:
+                reply = QMessageBox.question(
+                    self, "Delete", f"Delete {name}?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    self._remote_request_delete(path_str)
+                    self.status.setText(f"Sent delete request for {name}")
+            return
+        src = Path(path_str)
         reply = QMessageBox.question(
             self, "Delete", f"Delete {src.name}?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
@@ -1485,12 +1600,20 @@ class FileManagerWindow(QFrame):
 
     def _toolbar_action(self, action: str):
         if action == "Back":
-            parent = self.current_path.parent
-            if parent != self.current_path:
-                self._load_path(parent)
+            if self._remote:
+                parent = self._remote_parent(self.current_path)
+                if parent and parent != self.current_path:
+                    self._load_path(parent)
+            else:
+                parent = self.current_path.parent
+                if parent != self.current_path:
+                    self._load_path(parent)
         elif action == "Refresh":
             self._load_path(self.current_path)
         elif action == "Upload":
+            if self._remote:
+                self.status.setText("Upload not yet supported in remote mode")
+                return
             files, _ = QFileDialog.getOpenFileNames(self, "Upload files")
             for f in files:
                 name = Path(f).name
@@ -1506,6 +1629,9 @@ class FileManagerWindow(QFrame):
         elif action == "Delete":
             self._ctx_delete()
         elif action == "New Folder":
+            if self._remote:
+                self.status.setText("New folder not yet supported in remote mode")
+                return
             from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
             if ok and name:
