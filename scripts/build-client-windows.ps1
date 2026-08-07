@@ -46,4 +46,9 @@ pyinstaller --noconsole --name "MagnetClient" `
   --add-data "Magnet Client.pyw;." `
   "Magnet Client v2.pyw"
 
+$version = (Select-String -Path "Magnet Client v2.pyw" -Pattern '^VERSION = "(.*)"').Matches.Groups[1].Value
+if (-not $version) { $version = "v2.0.67" }
+New-Item -ItemType Directory -Force -Path "dist\MagnetClient" | Out-Null
+Set-Content -Path "dist\MagnetClient\version.txt" -Value $version -NoNewline
+
 Write-Host "Built: dist\MagnetClient"

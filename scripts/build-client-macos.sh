@@ -58,4 +58,8 @@ chmod +x "dist/MagnetClient.app/Contents/MacOS/MagnetClient"
   "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || true
 codesign --force --deep --sign - "dist/MagnetClient.app"
 
+VERSION=$(grep -oP '^VERSION = "\K[^"]+' "Magnet Client v2.pyw" 2>/dev/null || echo "v2.0.67")
+mkdir -p "dist/MagnetClient.app/Contents/Resources"
+printf '%s' "$VERSION" > "dist/MagnetClient.app/Contents/Resources/version.txt"
+
 echo "Built: dist/MagnetClient.app"
