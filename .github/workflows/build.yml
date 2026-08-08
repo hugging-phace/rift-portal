@@ -243,6 +243,13 @@ jobs:
             --hidden-import mss `
             --add-data "Magnet Client.pyw;." `
             "Magnet Client v2.pyw"
+      - name: Write client version file
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path "Magnet Client v2.pyw" -Pattern '^VERSION = "(.*)"').Matches.Groups[1].Value
+          if (-not $version) { $version = "v2.0.67" }
+          New-Item -ItemType Directory -Force -Path "dist\MagnetClient" | Out-Null
+          Set-Content -Path "dist\MagnetClient\version.txt" -Value $version -NoNewline
       - name: Upload Windows client release asset
         if: github.ref == 'refs/heads/main'
         shell: pwsh
@@ -321,6 +328,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
             "dist/MagnetClient.app/Contents/Info.plist" 2>/dev/null || true
           codesign --force --deep --sign - "dist/MagnetClient.app"
+      - name: Write client version file
+        run: |
+          VERSION=$(grep -oP '^VERSION = "\K[^"]+' "Magnet Client v2.pyw" 2>/dev/null || echo "v2.0.67")
+          mkdir -p "dist/MagnetClient.app/Contents/Resources"
+          printf '%s' "$VERSION" > "dist/MagnetClient.app/Contents/Resources/version.txt"
       - name: Upload macOS client release asset
         if: github.ref == 'refs/heads/main'
         env:
