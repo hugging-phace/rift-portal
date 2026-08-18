@@ -1813,10 +1813,13 @@ class ChatBubble(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
+        align = Qt.AlignmentFlag.AlignLeft if is_atlas else Qt.AlignmentFlag.AlignRight
+        layout.setAlignment(align)
 
         sender_lbl = QLabel(sender)
         sender_lbl.setStyleSheet(f"color: {PALETTE['muted']}; font-size: 10px; background: transparent;")
         sender_lbl.setFont(QFont("Segoe UI", 8))
+        sender_lbl.setAlignment(align)
 
         bubble = QLabel(text)
         bubble.setWordWrap(True)
@@ -1834,16 +1837,20 @@ class ChatBubble(QFrame):
             }}
         """)
 
-        if is_atlas:
-            layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            layout.addWidget(sender_lbl, alignment=Qt.AlignmentFlag.AlignLeft)
-            layout.addWidget(bubble, alignment=Qt.AlignmentFlag.AlignLeft)
-            bubble.setMaximumWidth(280)
-        else:
-            layout.setAlignment(Qt.AlignmentFlag.AlignRight)
-            layout.addWidget(sender_lbl, alignment=Qt.AlignmentFlag.AlignRight)
-            layout.addWidget(bubble, alignment=Qt.AlignmentFlag.AlignRight)
-            bubble.setMaximumWidth(280)
+        # Size the bubble to the text so it never gets squeezed as the scroll area narrows.
+        fm = QFontMetrics(bubble.font())
+        max_width = 280
+        text_rect = fm.boundingRect(0, 0, max_width, 10000, Qt.TextFlag.TextWordWrap, text)
+        pad_w = 24
+        pad_h = 20
+        width = max(80, min(text_rect.width() + pad_w, max_width))
+        height = max(30, text_rect.height() + pad_h)
+        bubble.setFixedSize(width, height)
+        bubble.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addWidget(sender_lbl, alignment=align)
+        layout.addWidget(bubble, alignment=align)
 
 
 class ChatWindow(QWidget):
