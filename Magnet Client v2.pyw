@@ -27,7 +27,7 @@ from pathlib import Path
 VERSION = "v2.0.59"
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject, QUrl
-from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor, QPixmap, QDesktopServices
+from PySide6.QtGui import QPainter, QBrush, QPen, QIcon, QCursor, QAction, QPainterPath, QColor, QPixmap, QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication, QWidget, QSystemTrayIcon, QMenu,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
@@ -59,24 +59,36 @@ class ChatBubble(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(2)
-        if is_atlas:
-            layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        else:
-            layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        align = Qt.AlignmentFlag.AlignLeft if is_atlas else Qt.AlignmentFlag.AlignRight
+        layout.setAlignment(align)
 
         sender = QLabel("Atlas" if is_atlas else "You")
         sender.setStyleSheet(
             f"color: {_css_color(theme.muted)}; font-size: 10px; background: transparent;"
         )
+        sender.setAlignment(align)
+
         bubble = QLabel(text)
         bubble.setWordWrap(True)
         bubble.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         bubble.setStyleSheet(self._bubble_stylesheet(is_atlas))
-        bubble.setMinimumWidth(80)
-        bubble.setMaximumWidth(260)
-        bubble.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.MinimumExpanding)
 
-        align = Qt.AlignmentFlag.AlignLeft if is_atlas else Qt.AlignmentFlag.AlignRight
+        # Size the bubble to the text instead of letting the layout squeeze it.
+        fm = QFontMetrics(bubble.font())
+        max_width = 260
+        text_rect = fm.boundingRect(
+            0, 0, max_width, 10000,
+            Qt.TextFlag.TextWordWrap,
+            text,
+        )
+        pad_w = 24  # 12px horizontal padding each side
+        pad_h = 20  # 10px vertical padding each side
+        width = max(80, min(text_rect.width() + pad_w, max_width))
+        height = max(30, text_rect.height() + pad_h)
+        bubble.setFixedSize(width, height)
+        bubble.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         layout.addWidget(sender, alignment=align)
         layout.addWidget(bubble, alignment=align)
 

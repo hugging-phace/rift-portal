@@ -3557,7 +3557,6 @@ class SessionDetailView(QWidget):
 
     def _add_chat_bubble(self, text, is_admin=False, sender=None):
         bubble = QFrame()
-        bubble.setMaximumWidth(280)
         if is_admin:
             bg = PALETTE["bubble_user"]
             color = PALETTE["accent_bright"]
@@ -3585,6 +3584,16 @@ class SessionDetailView(QWidget):
         msg.setWordWrap(True)
         msg.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+
+        # Size the label to the text so it doesn't get squeezed by the scroll area.
+        fm = QFontMetrics(msg.font())
+        max_width = 260
+        text_rect = fm.boundingRect(0, 0, max_width, 10000, Qt.TextFlag.TextWordWrap, text)
+        width = max(80, min(text_rect.width() + 20, max_width))
+        height = max(20, text_rect.height() + 12)
+        msg.setFixedSize(width, height)
+        bubble.setMaximumWidth(max_width + 40)
+
         bl.addWidget(sender)
         bl.addWidget(msg)
         wrapper = QWidget()
