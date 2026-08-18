@@ -55,9 +55,11 @@ def main():
     if bbox:
         glyph = glyph.crop(bbox)
 
-    # Scale the glyph so it fills ~70 % of the icon.
-    target = int(base_size * 0.70)
-    glyph.thumbnail((target, target), Image.Resampling.LANCZOS)
+    # Scale the glyph so it fills ~85 % of the icon, allowing upscaling.
+    target = int(base_size * 0.85)
+    scale = target / max(glyph.width, glyph.height)
+    new_size = (int(glyph.width * scale), int(glyph.height * scale))
+    glyph = glyph.resize(new_size, Image.Resampling.LANCZOS)
 
     icon = Image.new(
         "RGBA",
